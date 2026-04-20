@@ -3,7 +3,10 @@ from __future__ import annotations
 import math
 import os
 import re
+import subprocess
+import sys
 import traceback
+from datetime import datetime
 from pathlib import Path
 
 from dash import Dash, Input, Output, State, dcc, html
@@ -1860,6 +1863,51 @@ def create_app() -> Dash:
         )
 
         return title, table
+
+    @app.callback(
+        Output("egrz_run_status", "children"),
+        Input("egrz_run_button", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def _run_egrz_parser_once(n_clicks: int):
+        if not n_clicks:
+            raise PreventUpdate
+
+        project_root = Path(__file__).resolve().parent
+        script_path = project_root / "scripts" / "egrz_monitor.py"
+        if not script_path.exists():
+            return dbc.Alert("Скрипт scripts/egrz_monitor.py не найден.", color="danger", className="py-2 mb-0")
+
+        log_path = project_root / "output" / "egrz_manual_run.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        python_bin = sys.executable or "python3"
+        started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        command = [python_bin, str(script_path), "--once"]
+
+        try:
+            with log_path.open("a", encoding="utf-8") as marker_file:
+                marker_file.write(f"\n\n=== Manual run started at {started_at} ===\n")
+                marker_file.write(f"Command: {' '.join(command)}\n")
+            with log_path.open("ab") as log_file:
+                subprocess.Popen(
+                    command,
+                    cwd=str(project_root),
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+        except Exception as exc:
+            return dbc.Alert(
+                f"Не удалось запустить парсер: {type(exc).__name__}: {exc}",
+                color="danger",
+                className="py-2 mb-0",
+            )
+
+        return dbc.Alert(
+            f"Парсер запущен в фоне ({started_at}). Лог: {log_path}",
+            color="success",
+            className="py-2 mb-0",
+        )
 
     return app
 

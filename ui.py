@@ -32,7 +32,22 @@ def layout() -> dbc.Container:
                         md=9,
                     ),
                     dbc.Col(
-                        dbc.Badge("Local", color="secondary", className="mt-2"),
+                        [
+                            dbc.Badge("Local", color="secondary", className="mt-2"),
+                            html.Div(
+                                [
+                                    dbc.Button(
+                                        "Запустить EGRZ парсер (1 цикл)",
+                                        id="egrz_run_button",
+                                        color="primary",
+                                        size="sm",
+                                        className="mt-2",
+                                    ),
+                                    html.Div(id="egrz_run_status", className="mt-2"),
+                                ],
+                                className="d-flex flex-column align-items-end",
+                            ),
+                        ],
                         md=3,
                         className="text-end",
                     ),

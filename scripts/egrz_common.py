@@ -34,7 +34,12 @@ REQUIRED_COLUMNS = [
     COLUMN_WORK_TYPE,
 ]
 
-TARGET_REGIONS = ["Краснодарский край", "Республика Крым"]
+TARGET_REGIONS = [
+    "Краснодарский край",
+    "Республика Крым",
+    "алтай",
+    "карачаево-черкесская республика",
+]
 KEYWORDS = [
     "гостиница",
     "гостиничный",
@@ -132,8 +137,19 @@ def filter_rows(
     selected_keywords = keywords or KEYWORDS
     result: list[dict[str, str]] = []
     for row in rows:
-        region_value = row.get(COLUMN_REGION, "")
-        if not is_target_region(region_value, selected_regions):
+        region_value = row.get(COLUMN_REGION, "") or ""
+        object_value = row.get(COLUMN_OBJECT, "") or ""
+        region_match = is_target_region(region_value, selected_regions)
+
+        # "Архыз" используем как алиас региона только если в строке
+        # субъект не заполнен либо уже содержит указание на Карачаево-Черкессию.
+        region_norm = normalize_text(region_value)
+        object_norm = normalize_text(object_value)
+        archyz_alias_match = "архыз" in object_norm and (
+            not region_norm or "карачаево" in region_norm
+        )
+
+        if not (region_match or archyz_alias_match):
             continue
         hits = matched_keywords(compose_search_text(row), selected_keywords)
         if not hits:
