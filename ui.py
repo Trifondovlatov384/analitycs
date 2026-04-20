@@ -882,6 +882,13 @@ def layout() -> dbc.Container:
                                         color="secondary",
                                         outline=True,
                                     ),
+                                    dbc.Button(
+                                        "Скачать текущую выборку CSV",
+                                        id="egrz_download_button",
+                                        color="success",
+                                        className="ms-2",
+                                    ),
+                                    dcc.Download(id="egrz_download"),
                                     html.Div(id="egrz_run_status", className="mt-3"),
                                     html.Hr(),
                                     html.Div(id="egrz_last_outputs"),
@@ -916,6 +923,67 @@ def layout() -> dbc.Container:
                     ),
                 ],
                 className="g-3",
+            ),
+            dbc.Row(
+                [
+                    dbc.Col(
+                        dbc.Card(
+                            dbc.CardBody(
+                                [
+                                    html.Div("Фильтры ЕГРЗ", className="h5 mb-3"),
+                                    dbc.Row(
+                                        [
+                                            dbc.Col(
+                                                [
+                                                    dbc.Label("Субъект РФ"),
+                                                    dcc.Dropdown(
+                                                        id="egrz_filter_region",
+                                                        options=[],
+                                                        value=[],
+                                                        multi=True,
+                                                        placeholder="Все регионы",
+                                                    ),
+                                                ],
+                                                md=4,
+                                            ),
+                                            dbc.Col(
+                                                [
+                                                    dbc.Label("Вид работ"),
+                                                    dcc.Dropdown(
+                                                        id="egrz_filter_work_type",
+                                                        options=[],
+                                                        value=[],
+                                                        multi=True,
+                                                        placeholder="Все виды работ",
+                                                    ),
+                                                ],
+                                                md=4,
+                                            ),
+                                            dbc.Col(
+                                                [
+                                                    dbc.Label("Поиск по объекту/застройщику/РНС"),
+                                                    dbc.Input(
+                                                        id="egrz_filter_text",
+                                                        type="text",
+                                                        placeholder="Например: архыз, гостиница, 23-2-...",
+                                                    ),
+                                                ],
+                                                md=4,
+                                            ),
+                                        ],
+                                        className="g-3",
+                                    ),
+                                    html.Hr(),
+                                    html.Div(id="egrz_table_status", className="mb-2"),
+                                    html.Div(id="egrz_table_container"),
+                                ]
+                            ),
+                            className="shadow-sm",
+                        ),
+                        md=12,
+                        className="mt-3",
+                    ),
+                ]
             ),
         ],
         fluid=True,

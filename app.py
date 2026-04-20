@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import math
 import os
 import re
@@ -82,6 +83,67 @@ def _dash_year(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _normalize_ru(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value).strip().lower().replace("ё", "е")
+
+
+def _load_egrz_filtered_rows(filtered_path: Path) -> list[dict[str, str]]:
+    if not filtered_path.exists():
+        return []
+    rows: list[dict[str, str]] = []
+    with filtered_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+        reader = csv.DictReader(csv_file, delimiter=";")
+        for row in reader:
+            rows.append(
+                {
+                    "Субъект РФ": row.get("Субъект РФ", "") or "",
+                    "РНС": row.get("Номер заключения экспертизы", "") or "",
+                    "Дата в реестре": row.get("Дата включения сведений в реестр", "") or "",
+                    "Вид работ": row.get("Вид работ", "") or "",
+                    "Объект": row.get(
+                        "Наименование и адрес (местоположение) объекта капитального строительства, применительно к которому подготовлена проектная документация",
+                        "",
+                    )
+                    or "",
+                    "Застройщик": row.get(
+                        "Сведения о застройщике, обеспечившем подготовку проектной документации",
+                        "",
+                    )
+                    or "",
+                    "Ключи": row.get("MatchedKeywords", "") or "",
+                }
+            )
+    return rows
+
+
+def _apply_egrz_filters(
+    rows: list[dict[str, str]],
+    region_values: list[str] | None,
+    work_type_values: list[str] | None,
+    search_text: str | None,
+) -> list[dict[str, str]]:
+    region_set = set(_normalize_multi_str(region_values))
+    work_set = set(_normalize_multi_str(work_type_values))
+    search_norm = _normalize_ru(search_text)
+    filtered_rows: list[dict[str, str]] = []
+
+    for row in rows:
+        if region_set and row["Субъект РФ"] not in region_set:
+            continue
+        if work_set and row["Вид работ"] not in work_set:
+            continue
+        if search_norm:
+            haystack = _normalize_ru(
+                f"{row.get('Объект', '')} {row.get('Застройщик', '')} {row.get('РНС', '')} {row.get('Ключи', '')}"
+            )
+            if search_norm not in haystack:
+                continue
+        filtered_rows.append(row)
+    return filtered_rows
 
 
 def _filter_heatmap_deals(
@@ -1920,6 +1982,90 @@ def create_app() -> Dash:
             flush=True,
         )
         return preview, outputs
+
+    @app.callback(
+        Output("egrz_filter_region", "options"),
+        Output("egrz_filter_work_type", "options"),
+        Output("egrz_table_status", "children"),
+        Output("egrz_table_container", "children"),
+        Input("tabs", "value"),
+        Input("egrz_filter_region", "value"),
+        Input("egrz_filter_work_type", "value"),
+        Input("egrz_filter_text", "value"),
+    )
+    def _update_egrz_table(
+        current_tab: str,
+        region_values: list[str],
+        work_type_values: list[str],
+        search_text: str,
+    ):
+        if current_tab != "tab_egrz":
+            raise PreventUpdate
+
+        project_root = Path(__file__).resolve().parent
+        filtered_path = project_root / "output" / "filtered_latest.csv"
+        rows = _load_egrz_filtered_rows(filtered_path)
+        if not rows:
+            alert = dbc.Alert(
+                "Файл output/filtered_latest.csv пока не найден. Сначала запустите EGRZ парсер.",
+                color="warning",
+                className="mb-0",
+            )
+            return [], [], "Нет данных для отображения.", alert
+
+        all_regions = sorted({r["Субъект РФ"] for r in rows if r.get("Субъект РФ")})
+        all_work_types = sorted({r["Вид работ"] for r in rows if r.get("Вид работ")})
+        region_options = [{"label": x, "value": x} for x in all_regions]
+        work_options = [{"label": x, "value": x} for x in all_work_types]
+
+        filtered_rows = _apply_egrz_filters(rows, region_values, work_type_values, search_text)
+
+        status = f"Показано записей: {len(filtered_rows)} из {len(rows)}"
+        table = dash_table.DataTable(
+            data=filtered_rows,
+            columns=[{"name": c, "id": c} for c in ["Субъект РФ", "РНС", "Дата в реестре", "Вид работ", "Объект", "Застройщик", "Ключи"]],
+            page_size=15,
+            sort_action="native",
+            filter_action="native",
+            style_table={"overflowX": "auto"},
+            style_cell={"padding": "6px", "fontFamily": "system-ui", "fontSize": 12, "whiteSpace": "normal"},
+            style_header={"fontWeight": "600"},
+        )
+        return region_options, work_options, status, table
+
+    @app.callback(
+        Output("egrz_download", "data"),
+        Input("egrz_download_button", "n_clicks"),
+        State("egrz_filter_region", "value"),
+        State("egrz_filter_work_type", "value"),
+        State("egrz_filter_text", "value"),
+        prevent_initial_call=True,
+    )
+    def _download_egrz_filtered_csv(
+        n_clicks: int,
+        region_values: list[str] | None,
+        work_type_values: list[str] | None,
+        search_text: str | None,
+    ):
+        if not n_clicks:
+            raise PreventUpdate
+
+        project_root = Path(__file__).resolve().parent
+        filtered_path = project_root / "output" / "filtered_latest.csv"
+        rows = _load_egrz_filtered_rows(filtered_path)
+        filtered_rows = _apply_egrz_filters(rows, region_values, work_type_values, search_text)
+
+        output = io.StringIO()
+        writer = csv.DictWriter(
+            output,
+            fieldnames=["Субъект РФ", "РНС", "Дата в реестре", "Вид работ", "Объект", "Застройщик", "Ключи"],
+            delimiter=";",
+        )
+        writer.writeheader()
+        writer.writerows(filtered_rows)
+        csv_content = output.getvalue()
+
+        return dcc.send_string(csv_content, "egrz_filtered_selection.csv")
 
     @app.callback(
         Output("egrz_run_status", "children"),
