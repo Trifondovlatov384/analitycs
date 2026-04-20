@@ -34,18 +34,12 @@ def layout() -> dbc.Container:
                     dbc.Col(
                         [
                             dbc.Badge("Local", color="secondary", className="mt-2"),
-                            html.Div(
-                                [
-                                    dbc.Button(
-                                        "Запустить EGRZ парсер (1 цикл)",
-                                        id="egrz_run_button",
-                                        color="primary",
-                                        size="sm",
-                                        className="mt-2",
-                                    ),
-                                    html.Div(id="egrz_run_status", className="mt-2"),
-                                ],
-                                className="d-flex flex-column align-items-end",
+                            dbc.Button(
+                                "Открыть страницу ЕГРЗ",
+                                id="open_egrz_tab_button",
+                                color="primary",
+                                size="sm",
+                                className="mt-2",
                             ),
                         ],
                         md=3,
@@ -852,6 +846,82 @@ def layout() -> dbc.Container:
         className="pb-5",
     )
 
+    egrz_tab = dbc.Container(
+        [
+            dbc.Row(
+                [
+                    dbc.Col(
+                        [
+                            html.H3("ЕГРЗ Парсер"),
+                            html.Div(
+                                "Ручной запуск парсера ЕГРЗ, просмотр статуса и лога последнего запуска.",
+                                className="text-muted",
+                            ),
+                        ],
+                        md=12,
+                    )
+                ],
+                className="mt-4",
+            ),
+            dbc.Row(
+                [
+                    dbc.Col(
+                        dbc.Card(
+                            dbc.CardBody(
+                                [
+                                    html.Div("Управление запуском", className="h5 mb-3"),
+                                    dbc.Button(
+                                        "Запустить EGRZ парсер (1 цикл)",
+                                        id="egrz_run_button",
+                                        color="primary",
+                                        className="me-2",
+                                    ),
+                                    dbc.Button(
+                                        "Обновить лог",
+                                        id="egrz_refresh_log",
+                                        color="secondary",
+                                        outline=True,
+                                    ),
+                                    html.Div(id="egrz_run_status", className="mt-3"),
+                                    html.Hr(),
+                                    html.Div(id="egrz_last_outputs"),
+                                ]
+                            ),
+                            className="shadow-sm",
+                        ),
+                        md=5,
+                        className="mt-3",
+                    ),
+                    dbc.Col(
+                        dbc.Card(
+                            dbc.CardBody(
+                                [
+                                    html.Div("Лог последнего запуска", className="h6"),
+                                    html.Pre(
+                                        id="egrz_log_preview",
+                                        style={
+                                            "maxHeight": "520px",
+                                            "overflowY": "auto",
+                                            "whiteSpace": "pre-wrap",
+                                            "fontSize": "12px",
+                                            "marginBottom": "0",
+                                        },
+                                    ),
+                                ]
+                            ),
+                            className="shadow-sm",
+                        ),
+                        md=7,
+                        className="mt-3",
+                    ),
+                ],
+                className="g-3",
+            ),
+        ],
+        fluid=True,
+        className="pb-5",
+    )
+
     return dbc.Container(
         [
             dcc.Tabs(
@@ -863,6 +933,7 @@ def layout() -> dbc.Container:
                     dcc.Tab(label="Сравнение", value="tab_compare", children=compare_tab),
                     dcc.Tab(label="Эйлер", value="tab_euler", children=euler_tab),
                     dcc.Tab(label="Теплокарта", value="tab_heatmap", children=heatmap_tab),
+                    dcc.Tab(label="ЕГРЗ Парсер", value="tab_egrz", children=egrz_tab),
                 ],
             )
         ],

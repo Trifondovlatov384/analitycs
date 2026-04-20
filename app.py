@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import math
 import os
 import re
@@ -1863,6 +1864,62 @@ def create_app() -> Dash:
         )
 
         return title, table
+
+    @app.callback(
+        Output("tabs", "value"),
+        Input("open_egrz_tab_button", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def _open_egrz_tab(n_clicks: int):
+        if not n_clicks:
+            raise PreventUpdate
+        return "tab_egrz"
+
+    @app.callback(
+        Output("egrz_log_preview", "children"),
+        Output("egrz_last_outputs", "children"),
+        Input("egrz_refresh_log", "n_clicks"),
+        Input("egrz_run_button", "n_clicks"),
+    )
+    def _refresh_egrz_log_and_outputs(refresh_clicks: int | None, run_clicks: int | None):
+        _ = (refresh_clicks, run_clicks)
+        project_root = Path(__file__).resolve().parent
+        log_path = project_root / "output" / "egrz_manual_run.log"
+        filtered_path = project_root / "output" / "filtered_latest.csv"
+        mind_map_path = project_root / "output" / "mind_map.json"
+
+        if log_path.exists():
+            log_lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            preview = "\n".join(log_lines[-80:]) if log_lines else "(лог пуст)"
+        else:
+            preview = "Лог пока не создан. Нажмите «Запустить EGRZ парсер (1 цикл)»."
+
+        matched_count = 0
+        if filtered_path.exists():
+            with filtered_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+                reader = csv.DictReader(csv_file, delimiter=";")
+                matched_count = sum(1 for _ in reader)
+
+        filtered_mtime = (
+            datetime.fromtimestamp(filtered_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+            if filtered_path.exists()
+            else "не создан"
+        )
+        map_mtime = (
+            datetime.fromtimestamp(mind_map_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+            if mind_map_path.exists()
+            else "не создан"
+        )
+
+        outputs = dbc.ListGroup(
+            [
+                dbc.ListGroupItem(f"Отфильтрованных записей: {matched_count}"),
+                dbc.ListGroupItem(f"filtered_latest.csv обновлён: {filtered_mtime}"),
+                dbc.ListGroupItem(f"mind_map.json обновлён: {map_mtime}"),
+            ],
+            flush=True,
+        )
+        return preview, outputs
 
     @app.callback(
         Output("egrz_run_status", "children"),
