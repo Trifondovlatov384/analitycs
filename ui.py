@@ -725,120 +725,6 @@ def layout() -> dbc.Container:
         className="pb-5",
     )
 
-    new_heatmap_tab = dbc.Container(
-        [
-            dbc.Row(
-                [
-                    dbc.Col(
-                        [
-                            html.H3("Теплокарта 2"),
-                            html.Div(
-                                "Комплексы слева, месяцы справа, цвет — количество сделок. "
-                                "Фильтры без режима матрицы и без агломерации.",
-                                className="text-muted",
-                            ),
-                        ],
-                        md=12,
-                    )
-                ],
-                className="mt-4",
-            ),
-            dbc.Row(
-                [
-                    dbc.Col(
-                        dbc.Card(
-                            dbc.CardBody(
-                                [
-                                    html.Div("Фильтры", className="h5 mb-3"),
-                                    dbc.Label("Год"),
-                                    dcc.Dropdown(id="nh_year", options=[], value=None, clearable=True),
-                                    dbc.Label("Город", className="mt-3"),
-                                    dcc.Dropdown(
-                                        id="nh_city",
-                                        options=[],
-                                        value=None,
-                                        clearable=True,
-                                        placeholder="Если пусто — все города",
-                                    ),
-                                    dbc.Label("Район (мультивыбор)", className="mt-3"),
-                                    dcc.Dropdown(
-                                        id="nh_district",
-                                        options=[],
-                                        value=[],
-                                        multi=True,
-                                        placeholder="Если пусто — все районы",
-                                    ),
-                                    dbc.Label("Тип объекта (квартира/апартаменты)", className="mt-3"),
-                                    dcc.Dropdown(
-                                        id="nh_type_lot",
-                                        options=[],
-                                        value=[],
-                                        multi=True,
-                                        placeholder="Если пусто — все типы",
-                                    ),
-                                    dbc.Label("Расчёт по сделкам", className="mt-3"),
-                                    dcc.RadioItems(
-                                        id="nh_mortgage_mode",
-                                        options=[
-                                            {"label": "Все", "value": "all"},
-                                            {"label": "Ипотека", "value": "mortgage"},
-                                            {"label": "Не ипотека", "value": "non_mortgage"},
-                                        ],
-                                        value="all",
-                                        className="mt-1",
-                                    ),
-                                    dbc.Label("Качество данных", className="mt-3"),
-                                    dbc.Checklist(
-                                        id="nh_data_quality_flags",
-                                        options=[
-                                            {"label": "Исключать оптовые сделки (Крым)", "value": "exclude_wholesale"},
-                                            {"label": "Только сделки с известным бюджетом", "value": "known_budget_only"},
-                                        ],
-                                        value=["exclude_wholesale", "known_budget_only"],
-                                        switch=True,
-                                        className="mt-1",
-                                    ),
-                                    dbc.Label("Топ комплексов", className="mt-3"),
-                                    dcc.Slider(
-                                        id="nh_top_n",
-                                        min=10,
-                                        max=100,
-                                        step=5,
-                                        value=40,
-                                        marks={10: "10", 25: "25", 40: "40", 60: "60", 100: "100"},
-                                    ),
-                                    dbc.FormText(
-                                        "Цветовая шкала обрезает экстремумы (квантили), чтобы середина распределения читалась лучше.",
-                                        className="mt-2",
-                                    ),
-                                ]
-                            ),
-                            className="shadow-sm",
-                        ),
-                        md=4,
-                        className="mt-3",
-                    ),
-                    dbc.Col(
-                        dbc.Card(
-                            dbc.CardBody(
-                                [
-                                    html.Div("Сделки по месяцам", className="h6"),
-                                    dcc.Graph(id="nh_fig_heatmap", config={"displayModeBar": False}),
-                                ]
-                            ),
-                            className="shadow-sm",
-                        ),
-                        md=8,
-                        className="mt-3",
-                    ),
-                ],
-                className="g-3",
-            ),
-        ],
-        fluid=True,
-        className="pb-5",
-    )
-
     euler_tab = dbc.Container(
         [
             dbc.Row(
@@ -1469,7 +1355,6 @@ def layout() -> dbc.Container:
                     dcc.Tab(label="Сравнение", value="tab_compare", children=compare_tab),
                     dcc.Tab(label="Эйлер", value="tab_euler", children=euler_tab),
                     dcc.Tab(label="Теплокарта", value="tab_heatmap", children=heatmap_tab),
-                    dcc.Tab(label="Теплокарта 2", value="tab_heatmap2", children=new_heatmap_tab),
                     dcc.Tab(label="ЕГРЗ Парсер", value="tab_egrz", children=egrz_tab),
                     dcc.Tab(label="Рост лота", value="tab_lot_growth", children=lot_growth_tab),
                     dcc.Tab(label="Рост проектов", value="tab_project_growth", children=project_growth_tab),

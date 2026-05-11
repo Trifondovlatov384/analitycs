@@ -394,38 +394,60 @@ def make_complex_compare_figure(
 ) -> go.Figure:
     fig = go.Figure()
     if df_cmp.is_empty():
-        fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=360)
+        fig.update_layout(
+            margin=dict(l=10, r=10, t=10, b=10),
+            height=360,
+            annotations=[
+                dict(
+                    text="Нет данных по выбранным фильтрам (проверьте год, источник и тип недвижимости).",
+                    showarrow=False,
+                    x=0.5,
+                    y=0.5,
+                    xref="paper",
+                    yref="paper",
+                )
+            ],
+        )
         return fig
 
     top = df_cmp.head(80)
     selected_set = {x for x in (selected_objects or []) if isinstance(x, str) and x.strip()}
     objects = top["object"].to_list()
     selected_points = [i for i, obj in enumerate(objects) if obj in selected_set]
-    fig.add_trace(
-        go.Scatter(
-            x=top["avg_price_sqm"].to_list(),
-            y=top["avg_budget"].to_list(),
-            mode="markers",
-            marker=dict(
-                size=[max(8, min(30, int(v / 5))) for v in top["deals"].to_list()],
-                opacity=0.7,
-            ),
-            text=top["object"].to_list(),
-            customdata=top.select(["city", "developer", "deals"]).to_numpy(),
-            selectedpoints=selected_points,
-            selected=dict(marker=dict(opacity=1.0, line=dict(color="#111827", width=2))),
-            unselected=dict(marker=dict(opacity=0.25)),
-            hovertemplate=(
-                "Комплекс=%{text}"
-                "<br>Город=%{customdata[0]}"
-                "<br>Девелопер=%{customdata[1]}"
-                "<br>Сделок=%{customdata[2]}"
-                "<br>Средняя цена м²=%{x:,.0f} ₽"
-                "<br>Средний бюджет=%{y:,.0f} ₽"
-                "<extra></extra>"
-            ),
-        )
+
+    deals = top["deals"].to_list()
+    sizes: list[int] = []
+    for v in deals:
+        try:
+            n = int(v) if v is not None else 0
+        except (TypeError, ValueError):
+            n = 0
+        sizes.append(max(8, min(30, max(1, n // 5))))
+
+    scatter_kw: dict = dict(
+        x=top["avg_price_sqm"].to_list(),
+        y=top["avg_budget"].to_list(),
+        mode="markers",
+        marker=dict(size=sizes, opacity=0.75),
+        text=top["object"].to_list(),
+        customdata=top.select(["city", "developer", "deals"]).to_numpy(),
+        hovertemplate=(
+            "Комплекс=%{text}"
+            "<br>Город=%{customdata[0]}"
+            "<br>Девелопер=%{customdata[1]}"
+            "<br>Сделок=%{customdata[2]}"
+            "<br>Средняя цена м²=%{x:,.0f} ₽"
+            "<br>Средний бюджет=%{y:,.0f} ₽"
+            "<extra></extra>"
+        ),
     )
+    # Plotly: при selectedpoints=[] и заданном unselected все точки становятся «нес выбранными» и почти исчезают.
+    if selected_points:
+        scatter_kw["selectedpoints"] = selected_points
+        scatter_kw["selected"] = dict(marker=dict(opacity=1.0, line=dict(color="#111827", width=2)))
+        scatter_kw["unselected"] = dict(marker=dict(opacity=0.28))
+
+    fig.add_trace(go.Scatter(**scatter_kw))
     fig.update_layout(
         margin=dict(l=10, r=10, t=10, b=10),
         height=360,
@@ -655,14 +677,12 @@ def create_app() -> Dash:
     @app.callback(
         Output("h_year", "options"),
         Output("h_year", "value"),
-        Output("nh_year", "options"),
-        Output("nh_year", "value"),
         Input("meta_years", "data"),
         Input("meta_default_year", "data"),
     )
     def _init_years_heatmap(meta_years: list[int], meta_default_year: int | None):
         opts = [{"label": str(y), "value": int(y)} for y in (meta_years or [])]
-        return opts, meta_default_year, opts, meta_default_year
+        return opts, meta_default_year
 
     @app.callback(
         Output("pg_year", "options"),
@@ -1024,7 +1044,17 @@ def create_app() -> Dash:
         cmp_df = complex_comparison_metrics(base).filter(
             pl.col("avg_price_sqm").is_not_null() & (pl.col("avg_price_sqm") > 0)
         )
-        fig_cmp = make_complex_compare_figure(cmp_df, selected_objects=selected_complexes)
+        valid_names = (
+            set(cmp_df["object"].to_list())
+            if not cmp_df.is_empty()
+            else set()
+        )
+        selected_effective = [
+            x
+            for x in (selected_complexes or [])
+            if isinstance(x, str) and x.strip() and x.strip() in valid_names
+        ]
+        fig_cmp = make_complex_compare_figure(cmp_df, selected_objects=selected_effective)
 
         cmp_view = (
             cmp_df.select(
@@ -1040,7 +1070,7 @@ def create_app() -> Dash:
             .sort("Средний бюджет, ₽", descending=True)
             .head(300)
         )
-        selected_set = {x for x in (selected_complexes or []) if isinstance(x, str) and x.strip()}
+        selected_set = {x for x in selected_effective if isinstance(x, str) and x.strip()}
         if selected_set:
             cmp_selected = (
                 cmp_view.filter(pl.col("Комплекс").is_in(list(selected_set)))
@@ -1048,17 +1078,51 @@ def create_app() -> Dash:
             )
             if not cmp_selected.is_empty():
                 cmp_view = cmp_selected
-        tbl = dash_table.DataTable(
-            data=cmp_view.to_dicts(),
-            columns=[{"name": c, "id": c} for c in cmp_view.columns],
-            page_size=12,
-            sort_action="native",
-            filter_action="native",
-            style_table={"overflowX": "auto"},
-            style_cell={"padding": "6px", "fontFamily": "system-ui", "fontSize": 12},
-            style_header={"fontWeight": "600"},
+        table_data = cmp_view.to_dicts()
+        tbl_children: list = []
+        if not table_data:
+            tbl_children.append(
+                dbc.Alert(
+                    "По текущим фильтрам нет комплексов с положительным средним бюджетом и ценой м².",
+                    color="light",
+                    className="mb-2",
+                )
+            )
+        tbl_children.append(
+            dash_table.DataTable(
+                data=table_data,
+                columns=[{"name": c, "id": c} for c in cmp_view.columns],
+                page_size=12,
+                sort_action="native",
+                filter_action="native",
+                style_table={"overflowX": "auto"},
+                style_cell={"padding": "6px", "fontFamily": "system-ui", "fontSize": 12},
+                style_header={"fontWeight": "600"},
+            )
         )
-        return fig_cmp, tbl
+        return fig_cmp, html.Div(tbl_children)
+
+    @app.callback(
+        Output("cmp_selected_complexes", "data", allow_duplicate=True),
+        Input("cmp_year", "value"),
+        Input("cmp_months", "value"),
+        Input("cmp_source", "value"),
+        Input("cmp_agglomeration", "value"),
+        Input("cmp_city", "value"),
+        Input("cmp_mortgage_mode", "value"),
+        Input("cmp_type_lot", "value"),
+        prevent_initial_call=True,
+    )
+    def _clear_compare_selection_on_filters(
+        _year: int | None,
+        _months: list[str],
+        _source: str,
+        _agglomeration: str,
+        _cities: list[str],
+        _mortgage_mode: str,
+        _type_lots: list[str],
+    ):
+        return []
 
     @app.callback(
         Output("cmp_selected_complexes", "data"),
@@ -1524,102 +1588,6 @@ def create_app() -> Dash:
         pivot = pivot.select(["object"] + months)
 
         # Align rows
-        pivot = pivot.join(pl.DataFrame({"object": objects}), on="object", how="right").fill_null(0)
-        pivot = pivot.select(["object"] + months)
-
-        z = [pivot.select(months).row(i) for i in range(pivot.height)]
-        z = [[int(v) if v is not None else 0 for v in row] for row in z]
-
-        totals = [sum(row) for row in z]
-        display_objects = [f"{name} ({total})" for name, total in zip(objects, totals)]
-        return make_heatmap_figure(objects=objects, display_objects=display_objects, months=months, z=z)
-
-    @app.callback(
-        Output("nh_city", "options"),
-        Output("nh_district", "options"),
-        Output("nh_type_lot", "options"),
-        Input("nh_year", "value"),
-    )
-    def _nh_dimension_options(year: int | None):
-        dff = df
-        y = _dash_year(year)
-        if y is not None:
-            dff = dff.filter(pl_col("year") == y)
-        cities = list_sorted(dff.select("city").unique().to_series().to_list())
-        districts = list_sorted(dff.select("loc_district").unique().to_series().to_list())
-        types = list_sorted(dff.select("type_lot").unique().to_series().to_list())
-        return (
-            [{"label": c, "value": c} for c in cities],
-            [{"label": d, "value": d} for d in districts],
-            [{"label": t, "value": t} for t in types],
-        )
-
-    @app.callback(
-        Output("nh_fig_heatmap", "figure"),
-        Input("nh_year", "value"),
-        Input("nh_city", "value"),
-        Input("nh_district", "value"),
-        Input("nh_type_lot", "value"),
-        Input("nh_mortgage_mode", "value"),
-        Input("nh_data_quality_flags", "value"),
-        Input("nh_top_n", "value"),
-    )
-    def _nh_update_heatmap(
-        year: int | None,
-        city_sel: str | None,
-        districts_sel: list[str],
-        type_lot_sel: list[str],
-        mortgage_mode: str,
-        data_quality_flags: list[str],
-        top_n: int,
-    ):
-        filtered = _filter_heatmap_deals(
-            df,
-            deals_source="all",
-            year=year,
-            agglomeration="all",
-            cities_sel=city_sel,
-            districts_sel=districts_sel,
-            type_lot_sel=type_lot_sel,
-            mortgage_mode=mortgage_mode,
-            data_quality_flags=data_quality_flags,
-        )
-
-        if filtered.is_empty():
-            return make_heatmap_figure(objects=[], display_objects=None, months=[], z=[])
-
-        grouped = filtered.group_by(["object", "sold_month"]).agg(pl.len().alias("deals"))
-
-        top_objects = (
-            grouped.group_by("object")
-            .agg(pl.sum("deals").alias("total"))
-            .sort("total", descending=True)
-            .head(int(top_n))
-            .select("object")
-            .to_series()
-            .to_list()
-        )
-
-        grouped = grouped.filter(pl.col("object").is_in(top_objects))
-
-        months = list_sorted(grouped.select("sold_month").unique().to_series().to_list())
-        objects = top_objects
-
-        pivot = (
-            grouped.pivot(
-                index="object",
-                columns="sold_month",
-                values="deals",
-                aggregate_function="sum",
-            )
-            .fill_null(0)
-        )
-
-        for mcol in months:
-            if mcol not in pivot.columns:
-                pivot = pivot.with_columns(pl.lit(0).alias(mcol))
-        pivot = pivot.select(["object"] + months)
-
         pivot = pivot.join(pl.DataFrame({"object": objects}), on="object", how="right").fill_null(0)
         pivot = pivot.select(["object"] + months)
 
