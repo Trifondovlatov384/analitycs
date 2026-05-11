@@ -10,19 +10,20 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from egrz_text_analysis import (
+    COLUMN_DEVELOPER,
+    COLUMN_OBJECT,
+    COLUMN_REGION,
+    COLUMN_WORK_TYPE,
+    KEYWORDS,
+    TARGET_REGIONS,
+    filter_rows,
+)
+
 
 COLUMN_ID = "Идентификатор"
 COLUMN_NUMBER = "Номер заключения экспертизы"
-COLUMN_REGION = "Субъект РФ"
-COLUMN_OBJECT = (
-    "Наименование и адрес (местоположение) объекта капитального строительства, "
-    "применительно к которому подготовлена проектная документация"
-)
-COLUMN_DEVELOPER = (
-    "Сведения о застройщике, обеспечившем подготовку проектной документации"
-)
 COLUMN_REGISTRY_DATE = "Дата включения сведений в реестр"
-COLUMN_WORK_TYPE = "Вид работ"
 
 REQUIRED_COLUMNS = [
     COLUMN_ID,
@@ -33,56 +34,6 @@ REQUIRED_COLUMNS = [
     COLUMN_REGISTRY_DATE,
     COLUMN_WORK_TYPE,
 ]
-
-TARGET_REGIONS = [
-    "Краснодарский край",
-    "Республика Крым",
-    "алтай",
-    "карачаево-черкесская республика",
-]
-KEYWORDS = [
-    "гостиница",
-    "гостиничный",
-    "апартаментный",
-    "санаторий",
-    "апартаментов",
-    "апарт-",
-    "гостинично",
-]
-
-
-def normalize_text(value: str | None) -> str:
-    if not value:
-        return ""
-    return value.strip().lower().replace("ё", "е")
-
-
-def is_target_region(region_value: str, regions: list[str]) -> bool:
-    region_norm = normalize_text(region_value)
-    for region in regions:
-        if normalize_text(region) in region_norm:
-            return True
-    return False
-
-
-def matched_keywords(text: str, keywords: list[str]) -> list[str]:
-    text_norm = normalize_text(text)
-    hits: list[str] = []
-    for keyword in keywords:
-        if normalize_text(keyword) in text_norm:
-            hits.append(keyword)
-    return hits
-
-
-def compose_search_text(row: dict[str, str]) -> str:
-    return " ".join(
-        [
-            row.get(COLUMN_OBJECT, ""),
-            row.get(COLUMN_DEVELOPER, ""),
-            row.get(COLUMN_WORK_TYPE, ""),
-        ]
-    )
-
 
 def detect_encoding(content: bytes) -> str:
     for encoding in ("utf-8-sig", "cp1251", "utf-8"):
@@ -126,38 +77,6 @@ def fetch_url_bytes(url: str, timeout: int = 90, retries: int = 3, retry_delay_s
 def validate_required_columns(headers: list[str]) -> list[str]:
     header_set = set(headers)
     return [column for column in REQUIRED_COLUMNS if column not in header_set]
-
-
-def filter_rows(
-    rows: list[dict[str, str]],
-    regions: list[str] | None = None,
-    keywords: list[str] | None = None,
-) -> list[dict[str, str]]:
-    selected_regions = regions or TARGET_REGIONS
-    selected_keywords = keywords or KEYWORDS
-    result: list[dict[str, str]] = []
-    for row in rows:
-        region_value = row.get(COLUMN_REGION, "") or ""
-        object_value = row.get(COLUMN_OBJECT, "") or ""
-        region_match = is_target_region(region_value, selected_regions)
-
-        # "Архыз" используем как алиас региона только если в строке
-        # субъект не заполнен либо уже содержит указание на Карачаево-Черкессию.
-        region_norm = normalize_text(region_value)
-        object_norm = normalize_text(object_value)
-        archyz_alias_match = "архыз" in object_norm and (
-            not region_norm or "карачаево" in region_norm
-        )
-
-        if not (region_match or archyz_alias_match):
-            continue
-        hits = matched_keywords(compose_search_text(row), selected_keywords)
-        if not hits:
-            continue
-        prepared = dict(row)
-        prepared["MatchedKeywords"] = ", ".join(hits)
-        result.append(prepared)
-    return result
 
 
 def write_csv(path: Path, rows: list[dict[str, str]], fieldnames: list[str] | None = None, delimiter: str = ";") -> None:

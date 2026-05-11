@@ -8,10 +8,10 @@ import re
 import subprocess
 import sys
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from dash import Dash, Input, Output, State, dcc, html
+from dash import Dash, Input, Output, State, callback_context, dcc, html
 from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 from dash import dash_table
@@ -30,6 +30,12 @@ from aggregations import (
 )
 from data_loader import list_sorted, load_crimea_deals, load_deals, resolve_data_path
 from heatmap_loader import load_matrix_csv
+from project_growth_logic import (
+    compute_project_growth,
+    compute_room_growth,
+    filter_project_growth_deals,
+    project_growth_dimension_options,
+)
 from ui import layout
 
 
@@ -91,6 +97,44 @@ def _normalize_ru(value: object) -> str:
     return str(value).strip().lower().replace("ё", "е")
 
 
+def _to_float_loose(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+    s = str(value).strip()
+    if not s:
+        return None
+    s = s.replace(" ", "").replace("\u00A0", "")
+    s = s.replace(",", ".")
+    s = s.replace("'", "")
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _extract_city_from_object(text: str) -> str:
+    value = text or ""
+    patterns = [
+        r"\bг\.\s*([А-Яа-яЁёA-Za-z\- ]{2,60})",
+        r"\bгород\s+([А-Яа-яЁёA-Za-z\- ]{2,60})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, value)
+        if not match:
+            continue
+        city = match.group(1).strip(" ,.;:()\"'")
+        # Stop at common separators.
+        city = re.split(r"[,;:()]", city)[0].strip()
+        if city:
+            return city
+    return ""
+
+
 def _load_egrz_filtered_rows(filtered_path: Path) -> list[dict[str, str]]:
     if not filtered_path.exists():
         return []
@@ -98,25 +142,21 @@ def _load_egrz_filtered_rows(filtered_path: Path) -> list[dict[str, str]]:
     with filtered_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
         reader = csv.DictReader(csv_file, delimiter=";")
         for row in reader:
-            rows.append(
-                {
-                    "Субъект РФ": row.get("Субъект РФ", "") or "",
-                    "РНС": row.get("Номер заключения экспертизы", "") or "",
-                    "Дата в реестре": row.get("Дата включения сведений в реестр", "") or "",
-                    "Вид работ": row.get("Вид работ", "") or "",
-                    "Объект": row.get(
-                        "Наименование и адрес (местоположение) объекта капитального строительства, применительно к которому подготовлена проектная документация",
-                        "",
-                    )
-                    or "",
-                    "Застройщик": row.get(
-                        "Сведения о застройщике, обеспечившем подготовку проектной документации",
-                        "",
-                    )
-                    or "",
-                    "Ключи": row.get("MatchedKeywords", "") or "",
-                }
-            )
+            object_name = row.get(
+                "Наименование и адрес (местоположение) объекта капитального строительства, применительно к которому подготовлена проектная документация",
+                "",
+            ) or ""
+            prepared = dict(row)
+            prepared["РНС"] = row.get("Номер заключения экспертизы", "") or ""
+            prepared["Дата в реестре"] = row.get("Дата включения сведений в реестр", "") or ""
+            prepared["Объект"] = object_name
+            prepared["Застройщик"] = row.get(
+                "Сведения о застройщике, обеспечившем подготовку проектной документации",
+                "",
+            ) or ""
+            prepared["Ключи"] = row.get("MatchedKeywords", "") or ""
+            prepared["Город"] = _extract_city_from_object(object_name)
+            rows.append(prepared)
     return rows
 
 
@@ -138,7 +178,7 @@ def _apply_egrz_filters(
             continue
         if search_norm:
             haystack = _normalize_ru(
-                f"{row.get('Объект', '')} {row.get('Застройщик', '')} {row.get('РНС', '')} {row.get('Ключи', '')}"
+                f"{row.get('Объект', '')} {row.get('Застройщик', '')} {row.get('РНС', '')} {row.get('Ключи', '')} {row.get('Город', '')}"
             )
             if search_norm not in haystack:
                 continue
@@ -347,13 +387,20 @@ def make_complex_monthly_figure(df_monthly: pl.DataFrame, *, complex_name: str |
     return fig
 
 
-def make_complex_compare_figure(df_cmp: pl.DataFrame) -> go.Figure:
+def make_complex_compare_figure(
+    df_cmp: pl.DataFrame,
+    *,
+    selected_objects: list[str] | None = None,
+) -> go.Figure:
     fig = go.Figure()
     if df_cmp.is_empty():
         fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=360)
         return fig
 
     top = df_cmp.head(80)
+    selected_set = {x for x in (selected_objects or []) if isinstance(x, str) and x.strip()}
+    objects = top["object"].to_list()
+    selected_points = [i for i, obj in enumerate(objects) if obj in selected_set]
     fig.add_trace(
         go.Scatter(
             x=top["avg_price_sqm"].to_list(),
@@ -365,6 +412,9 @@ def make_complex_compare_figure(df_cmp: pl.DataFrame) -> go.Figure:
             ),
             text=top["object"].to_list(),
             customdata=top.select(["city", "developer", "deals"]).to_numpy(),
+            selectedpoints=selected_points,
+            selected=dict(marker=dict(opacity=1.0, line=dict(color="#111827", width=2))),
+            unselected=dict(marker=dict(opacity=0.25)),
             hovertemplate=(
                 "Комплекс=%{text}"
                 "<br>Город=%{customdata[0]}"
@@ -379,6 +429,7 @@ def make_complex_compare_figure(df_cmp: pl.DataFrame) -> go.Figure:
     fig.update_layout(
         margin=dict(l=10, r=10, t=10, b=10),
         height=360,
+        clickmode="event+select",
         xaxis_title="Средняя цена м², ₽",
         yaxis_title="Средний бюджет сделки, ₽",
     )
@@ -604,10 +655,22 @@ def create_app() -> Dash:
     @app.callback(
         Output("h_year", "options"),
         Output("h_year", "value"),
+        Output("nh_year", "options"),
+        Output("nh_year", "value"),
         Input("meta_years", "data"),
         Input("meta_default_year", "data"),
     )
     def _init_years_heatmap(meta_years: list[int], meta_default_year: int | None):
+        opts = [{"label": str(y), "value": int(y)} for y in (meta_years or [])]
+        return opts, meta_default_year, opts, meta_default_year
+
+    @app.callback(
+        Output("pg_year", "options"),
+        Output("pg_year", "value"),
+        Input("meta_years", "data"),
+        Input("meta_default_year", "data"),
+    )
+    def _init_years_project_growth(meta_years: list[int], meta_default_year: int | None):
         opts = [{"label": str(y), "value": int(y)} for y in (meta_years or [])]
         return opts, meta_default_year
 
@@ -928,6 +991,7 @@ def create_app() -> Dash:
         Input("cmp_city", "value"),
         Input("cmp_mortgage_mode", "value"),
         Input("cmp_type_lot", "value"),
+        Input("cmp_selected_complexes", "data"),
     )
     def _update_compare_tab(
         year: int | None,
@@ -937,6 +1001,7 @@ def create_app() -> Dash:
         cities: list[str],
         mortgage_mode: str,
         type_lots: list[str],
+        selected_complexes: list[str] | None,
     ):
         years = [int(year)] if year is not None else None
         months_sel = months or None
@@ -959,7 +1024,7 @@ def create_app() -> Dash:
         cmp_df = complex_comparison_metrics(base).filter(
             pl.col("avg_price_sqm").is_not_null() & (pl.col("avg_price_sqm") > 0)
         )
-        fig_cmp = make_complex_compare_figure(cmp_df)
+        fig_cmp = make_complex_compare_figure(cmp_df, selected_objects=selected_complexes)
 
         cmp_view = (
             cmp_df.select(
@@ -975,6 +1040,14 @@ def create_app() -> Dash:
             .sort("Средний бюджет, ₽", descending=True)
             .head(300)
         )
+        selected_set = {x for x in (selected_complexes or []) if isinstance(x, str) and x.strip()}
+        if selected_set:
+            cmp_selected = (
+                cmp_view.filter(pl.col("Комплекс").is_in(list(selected_set)))
+                .sort("Средний бюджет, ₽", descending=True)
+            )
+            if not cmp_selected.is_empty():
+                cmp_view = cmp_selected
         tbl = dash_table.DataTable(
             data=cmp_view.to_dicts(),
             columns=[{"name": c, "id": c} for c in cmp_view.columns],
@@ -986,6 +1059,41 @@ def create_app() -> Dash:
             style_header={"fontWeight": "600"},
         )
         return fig_cmp, tbl
+
+    @app.callback(
+        Output("cmp_selected_complexes", "data"),
+        Input("cmp_fig_complex_compare", "clickData"),
+        Input("cmp_clear_selected", "n_clicks"),
+        State("cmp_selected_complexes", "data"),
+        prevent_initial_call=True,
+    )
+    def _toggle_compare_selected(
+        click_data: dict | None,
+        clear_clicks: int | None,
+        selected_complexes: list[str] | None,
+    ):
+        selected = [x for x in (selected_complexes or []) if isinstance(x, str) and x.strip()]
+        trigger = getattr(callback_context, "triggered", [])
+        trigger_id = ""
+        if trigger:
+            trigger_id = str(trigger[0].get("prop_id", "")).split(".")[0]
+
+        if trigger_id == "cmp_clear_selected":
+            return []
+
+        if not click_data or "points" not in click_data or not click_data["points"]:
+            raise PreventUpdate
+
+        point = click_data["points"][0]
+        object_name = point.get("text")
+        if not object_name:
+            raise PreventUpdate
+
+        if object_name in selected:
+            selected = [x for x in selected if x != object_name]
+        else:
+            selected.append(object_name)
+        return selected
 
     @app.callback(
         Output("e_city", "options"),
@@ -1416,6 +1524,102 @@ def create_app() -> Dash:
         pivot = pivot.select(["object"] + months)
 
         # Align rows
+        pivot = pivot.join(pl.DataFrame({"object": objects}), on="object", how="right").fill_null(0)
+        pivot = pivot.select(["object"] + months)
+
+        z = [pivot.select(months).row(i) for i in range(pivot.height)]
+        z = [[int(v) if v is not None else 0 for v in row] for row in z]
+
+        totals = [sum(row) for row in z]
+        display_objects = [f"{name} ({total})" for name, total in zip(objects, totals)]
+        return make_heatmap_figure(objects=objects, display_objects=display_objects, months=months, z=z)
+
+    @app.callback(
+        Output("nh_city", "options"),
+        Output("nh_district", "options"),
+        Output("nh_type_lot", "options"),
+        Input("nh_year", "value"),
+    )
+    def _nh_dimension_options(year: int | None):
+        dff = df
+        y = _dash_year(year)
+        if y is not None:
+            dff = dff.filter(pl_col("year") == y)
+        cities = list_sorted(dff.select("city").unique().to_series().to_list())
+        districts = list_sorted(dff.select("loc_district").unique().to_series().to_list())
+        types = list_sorted(dff.select("type_lot").unique().to_series().to_list())
+        return (
+            [{"label": c, "value": c} for c in cities],
+            [{"label": d, "value": d} for d in districts],
+            [{"label": t, "value": t} for t in types],
+        )
+
+    @app.callback(
+        Output("nh_fig_heatmap", "figure"),
+        Input("nh_year", "value"),
+        Input("nh_city", "value"),
+        Input("nh_district", "value"),
+        Input("nh_type_lot", "value"),
+        Input("nh_mortgage_mode", "value"),
+        Input("nh_data_quality_flags", "value"),
+        Input("nh_top_n", "value"),
+    )
+    def _nh_update_heatmap(
+        year: int | None,
+        city_sel: str | None,
+        districts_sel: list[str],
+        type_lot_sel: list[str],
+        mortgage_mode: str,
+        data_quality_flags: list[str],
+        top_n: int,
+    ):
+        filtered = _filter_heatmap_deals(
+            df,
+            deals_source="all",
+            year=year,
+            agglomeration="all",
+            cities_sel=city_sel,
+            districts_sel=districts_sel,
+            type_lot_sel=type_lot_sel,
+            mortgage_mode=mortgage_mode,
+            data_quality_flags=data_quality_flags,
+        )
+
+        if filtered.is_empty():
+            return make_heatmap_figure(objects=[], display_objects=None, months=[], z=[])
+
+        grouped = filtered.group_by(["object", "sold_month"]).agg(pl.len().alias("deals"))
+
+        top_objects = (
+            grouped.group_by("object")
+            .agg(pl.sum("deals").alias("total"))
+            .sort("total", descending=True)
+            .head(int(top_n))
+            .select("object")
+            .to_series()
+            .to_list()
+        )
+
+        grouped = grouped.filter(pl.col("object").is_in(top_objects))
+
+        months = list_sorted(grouped.select("sold_month").unique().to_series().to_list())
+        objects = top_objects
+
+        pivot = (
+            grouped.pivot(
+                index="object",
+                columns="sold_month",
+                values="deals",
+                aggregate_function="sum",
+            )
+            .fill_null(0)
+        )
+
+        for mcol in months:
+            if mcol not in pivot.columns:
+                pivot = pivot.with_columns(pl.lit(0).alias(mcol))
+        pivot = pivot.select(["object"] + months)
+
         pivot = pivot.join(pl.DataFrame({"object": objects}), on="object", how="right").fill_null(0)
         pivot = pivot.select(["object"] + months)
 
@@ -1988,16 +2192,22 @@ def create_app() -> Dash:
         Output("egrz_filter_work_type", "options"),
         Output("egrz_table_status", "children"),
         Output("egrz_table_container", "children"),
+        Output("egrz_city_table_status", "children"),
+        Output("egrz_city_table_container", "children"),
         Input("tabs", "value"),
         Input("egrz_filter_region", "value"),
         Input("egrz_filter_work_type", "value"),
         Input("egrz_filter_text", "value"),
+        Input("egrz_page_size", "value"),
+        Input("egrz_show_all_fields", "value"),
     )
     def _update_egrz_table(
         current_tab: str,
         region_values: list[str],
         work_type_values: list[str],
         search_text: str,
+        page_size_value: str,
+        show_all_fields: list[str],
     ):
         if current_tab != "tab_egrz":
             raise PreventUpdate
@@ -2011,7 +2221,7 @@ def create_app() -> Dash:
                 color="warning",
                 className="mb-0",
             )
-            return [], [], "Нет данных для отображения.", alert
+            return [], [], "Нет данных для отображения.", alert, "Нет данных по городам.", alert
 
         all_regions = sorted({r["Субъект РФ"] for r in rows if r.get("Субъект РФ")})
         all_work_types = sorted({r["Вид работ"] for r in rows if r.get("Вид работ")})
@@ -2019,19 +2229,63 @@ def create_app() -> Dash:
         work_options = [{"label": x, "value": x} for x in all_work_types]
 
         filtered_rows = _apply_egrz_filters(rows, region_values, work_type_values, search_text)
+        page_size = len(filtered_rows) if page_size_value == "all" else int(page_size_value or "30")
+        page_size = max(page_size, 1) if filtered_rows else 10
+
+        primary_columns = ["Субъект РФ", "Город", "РНС", "Дата в реестре", "Вид работ", "Объект", "Застройщик", "Ключи"]
+        if "all_fields" in set(_normalize_multi_str(show_all_fields)):
+            extra_columns = sorted([c for c in filtered_rows[0].keys() if c not in primary_columns]) if filtered_rows else []
+            column_order = primary_columns + extra_columns
+        else:
+            column_order = primary_columns
+
+        search_raw = (search_text or "").strip()
+        style_data_conditional = []
+        if search_raw:
+            for col in ["Объект", "Застройщик", "РНС", "Ключи", "Город"]:
+                style_data_conditional.append(
+                    {
+                        "if": {"filter_query": f"{{{col}}} contains \"{search_raw}\"", "column_id": col},
+                        "backgroundColor": "#fff3cd",
+                    }
+                )
 
         status = f"Показано записей: {len(filtered_rows)} из {len(rows)}"
         table = dash_table.DataTable(
             data=filtered_rows,
-            columns=[{"name": c, "id": c} for c in ["Субъект РФ", "РНС", "Дата в реестре", "Вид работ", "Объект", "Застройщик", "Ключи"]],
-            page_size=15,
+            columns=[{"name": c, "id": c} for c in column_order],
+            page_size=page_size,
             sort_action="native",
             filter_action="native",
+            page_action="native",
             style_table={"overflowX": "auto"},
             style_cell={"padding": "6px", "fontFamily": "system-ui", "fontSize": 12, "whiteSpace": "normal"},
             style_header={"fontWeight": "600"},
+            style_data_conditional=style_data_conditional,
         )
-        return region_options, work_options, status, table
+
+        city_counter: dict[tuple[str, str], int] = {}
+        for row in filtered_rows:
+            city = (row.get("Город") or "").strip() or "Не определен"
+            region = (row.get("Субъект РФ") or "").strip()
+            key = (city, region)
+            city_counter[key] = city_counter.get(key, 0) + 1
+        city_rows = [
+            {"Город": city, "Субъект РФ": region, "Количество РНС": count}
+            for (city, region), count in city_counter.items()
+        ]
+        city_rows.sort(key=lambda x: x["Количество РНС"], reverse=True)
+        city_status = f"Городов в выборке: {len(city_rows)}"
+        city_table = dash_table.DataTable(
+            data=city_rows,
+            columns=[{"name": c, "id": c} for c in ["Город", "Субъект РФ", "Количество РНС"]],
+            page_size=20,
+            sort_action="native",
+            style_table={"overflowX": "auto"},
+            style_cell={"padding": "6px", "fontFamily": "system-ui", "fontSize": 12},
+            style_header={"fontWeight": "600"},
+        )
+        return region_options, work_options, status, table, city_status, city_table
 
     @app.callback(
         Output("egrz_download", "data"),
@@ -2058,7 +2312,7 @@ def create_app() -> Dash:
         output = io.StringIO()
         writer = csv.DictWriter(
             output,
-            fieldnames=["Субъект РФ", "РНС", "Дата в реестре", "Вид работ", "Объект", "Застройщик", "Ключи"],
+            fieldnames=["Субъект РФ", "Город", "РНС", "Дата в реестре", "Вид работ", "Объект", "Застройщик", "Ключи"],
             delimiter=";",
         )
         writer.writeheader()
@@ -2111,6 +2365,358 @@ def create_app() -> Dash:
             color="success",
             className="py-2 mb-0",
         )
+
+    @app.callback(
+        Output("lg_project", "options"),
+        Input("tabs", "value"),
+    )
+    def _lot_growth_project_options(current_tab: str):
+        if current_tab != "tab_lot_growth":
+            raise PreventUpdate
+        projects = (
+            df.filter(pl.col("source") == "crimea")
+            .filter(pl.col("object").is_not_null() & (pl.col("object") != ""))
+            .select("object")
+            .unique()
+            .to_series()
+            .to_list()
+        )
+        return [{"label": p, "value": p} for p in sorted(projects)]
+
+    @app.callback(
+        Output("lg_kpi_count", "children"),
+        Output("lg_kpi_current_price", "children"),
+        Output("lg_kpi_growth_abs", "children"),
+        Output("lg_kpi_growth_pct", "children"),
+        Output("lg_kpi_roi_pct", "children"),
+        Output("lg_kpi_roi_annual_pct", "children"),
+        Output("lg_price_trend", "figure"),
+        Output("lg_table_status", "children"),
+        Output("lg_table_container", "children"),
+        Input("lg_project", "value"),
+        Input("lg_purchase_date", "date"),
+        Input("lg_purchase_price", "value"),
+        Input("lg_purchase_area", "value"),
+        Input("lg_purchase_floor", "value"),
+        Input("lg_sell_cost_pct", "value"),
+        Input("lg_area_tolerance_pct", "value"),
+        Input("lg_floor_tolerance", "value"),
+        Input("lg_page_size", "value"),
+    )
+    def _lot_growth_analysis(
+        project: str | None,
+        purchase_date: str | None,
+        purchase_price: object,
+        purchase_area: object,
+        purchase_floor: object,
+        sell_cost_pct: object,
+        area_tol_pct: int | None,
+        floor_tol: int | None,
+        page_size: int | None,
+    ):
+        empty_fig = go.Figure()
+        empty_fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320)
+        if not project:
+            return "0", "—", "—", "—", "—", "—", empty_fig, "Выберите проект и заполните параметры покупки.", html.Div()
+
+        price_value = _to_float_loose(purchase_price)
+        area_value = _to_float_loose(purchase_area)
+        floor_value = _to_float_loose(purchase_floor)
+        sell_cost_value = _to_float_loose(sell_cost_pct)
+
+        dff = df.filter(pl.col("source") == "crimea").filter(pl.col("object") == project)
+        dff = dff.filter(pl.col("sold_date").is_not_null())
+        if area_value is not None and area_value > 0:
+            tol = float(area_tol_pct or 10) / 100.0
+            low = float(area_value) * (1 - tol)
+            high = float(area_value) * (1 + tol)
+            dff = dff.filter(pl.col("area_sqm").is_not_null() & (pl.col("area_sqm") >= low) & (pl.col("area_sqm") <= high))
+        if floor_value is not None and floor_value >= 0:
+            ft = int(floor_tol or 2)
+            dff = dff.filter(
+                pl.col("floor_num").is_not_null()
+                & (pl.col("floor_num") >= float(floor_value) - ft)
+                & (pl.col("floor_num") <= float(floor_value) + ft)
+            )
+        if purchase_date:
+            dff = dff.filter(pl.col("sold_date") >= pl.lit(purchase_date).str.strptime(pl.Date, format="%Y-%m-%d", strict=False))
+
+        dff = dff.filter(pl.col("est_budget").is_not_null() & (pl.col("est_budget") > 0))
+        count = dff.height
+        if count == 0:
+            return "0", "—", "—", "—", "—", "—", empty_fig, "По заданным параметрам аналогов не найдено.", html.Div()
+
+        # Market estimate for ROI: adaptive recent window, not full-period average.
+        assessment_date = dff.select(pl.col("sold_date").max()).item()
+        if assessment_date is None:
+            return "0", "—", "—", "—", "—", "—", empty_fig, "Нет актуальной даты оценки по выбранным аналогам.", html.Div()
+
+        assessment_dt = assessment_date
+
+        def _slice_by_days(end_date, days_back: int, include_last_month: bool = False) -> pl.DataFrame:
+            if include_last_month:
+                start_date = end_date - timedelta(days=days_back)
+                return dff.filter((pl.col("sold_date") >= start_date) & (pl.col("sold_date") <= end_date))
+            safe_end = end_date - timedelta(days=30)
+            start_date = safe_end - timedelta(days=days_back)
+            return dff.filter((pl.col("sold_date") >= start_date) & (pl.col("sold_date") <= safe_end))
+
+        # Stability check over last 6 months (including last month):
+        # if price_sqm essentially flat, use last 2 months (but not 1 month only).
+        stable_window = _slice_by_days(assessment_dt, 180, include_last_month=True)
+        stable_monthly = (
+            stable_window.group_by("sold_month")
+            .agg(pl.mean("price_sqm").alias("avg_sqm"))
+            .sort("sold_month")
+        )
+        market_stable = False
+        if stable_monthly.height >= 4:
+            sqm_vals = stable_monthly["avg_sqm"].to_list()
+            avg_sqm = sum(sqm_vals) / len(sqm_vals) if sqm_vals else 0.0
+            if avg_sqm > 0:
+                spread = (max(sqm_vals) - min(sqm_vals)) / avg_sqm
+                market_stable = spread <= 0.02
+
+        if market_stable:
+            valuation_df = _slice_by_days(assessment_dt, 60, include_last_month=True)
+            valuation_rule = "Стабильный рынок: последние 2 месяца"
+        else:
+            win_3m = _slice_by_days(assessment_dt, 90, include_last_month=False)
+            if win_3m.height >= 30:
+                valuation_df = win_3m
+                valuation_rule = "Высокая активность: 3 месяца (без последнего)"
+            elif win_3m.height < 10:
+                win_6m = _slice_by_days(assessment_dt, 180, include_last_month=False)
+                if win_6m.height < 10:
+                    valuation_df = _slice_by_days(assessment_dt, 270, include_last_month=False)
+                    valuation_rule = "Низкая активность: 9 месяцев (без последнего)"
+                else:
+                    valuation_df = win_6m
+                    valuation_rule = "Низкая активность: 6 месяцев (без последнего)"
+            else:
+                valuation_df = _slice_by_days(assessment_dt, 180, include_last_month=False)
+                valuation_rule = "Базовое окно: 6 месяцев (без последнего)"
+
+        # Fallback if filtered window became too small.
+        if valuation_df.height == 0:
+            valuation_df = dff
+            valuation_rule = "Fallback: вся доступная выборка аналогов"
+
+        current_avg = float(valuation_df.select(pl.col("est_budget").mean()).item() or 0)
+        roi_text = "—"
+        roi_annual_text = "—"
+        if price_value is not None and price_value > 0:
+            growth_abs = current_avg - float(price_value)
+            growth_pct = (growth_abs / float(price_value)) * 100.0
+            growth_abs_text = f"{growth_abs:,.0f}".replace(",", " ")
+            growth_pct_text = f"{growth_pct:,.2f}%"
+
+            sell_cost = max(float(sell_cost_value or 0.0), 0.0) / 100.0
+            net_sale = current_avg * (1.0 - sell_cost)
+            roi = ((net_sale - float(price_value)) / float(price_value)) * 100.0
+            roi_text = f"{roi:,.2f}%"
+
+            if purchase_date:
+                try:
+                    purchase_dt = datetime.strptime(purchase_date, "%Y-%m-%d").date()
+                    today = datetime.now().date()
+                    days = max((today - purchase_dt).days, 1)
+                    years = days / 365.25
+                    annualized = ((max(net_sale, 1.0) / float(price_value)) ** (1 / years) - 1) * 100.0
+                    roi_annual_text = f"{annualized:,.2f}%"
+                except ValueError:
+                    roi_annual_text = "—"
+        else:
+            growth_abs_text = "—"
+            growth_pct_text = "—"
+
+        monthly = (
+            dff.group_by("sold_month")
+            .agg([pl.mean("est_budget").alias("avg_budget"), pl.len().alias("deals")])
+            .sort("sold_month")
+        )
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=monthly["sold_month"].to_list(),
+                y=monthly["avg_budget"].to_list(),
+                mode="lines+markers",
+                customdata=monthly["deals"].to_list(),
+                hovertemplate="Месяц=%{x}<br>Средняя цена=%{y:,.0f} ₽<br>Сделок=%{customdata}<extra></extra>",
+            )
+        )
+        fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320, yaxis_title="₽")
+
+        view = dff.select(
+            [
+                pl.col("sold_date").cast(pl.Utf8).alias("Дата сделки"),
+                pl.col("est_budget").round(0).alias("Цена сделки, ₽"),
+                pl.col("area_sqm").round(2).alias("Площадь, м²"),
+                pl.col("floor_num").round(0).alias("Этаж"),
+                pl.col("price_sqm").round(0).alias("Цена за м², ₽"),
+                pl.col("type_lot").alias("Тип объекта"),
+                pl.col("city").alias("Город"),
+            ]
+        ).sort("Дата сделки", descending=True)
+
+        tbl = dash_table.DataTable(
+            data=view.to_dicts(),
+            columns=[{"name": c, "id": c} for c in view.columns],
+            page_size=int(page_size or 30),
+            sort_action="native",
+            filter_action="native",
+            style_table={"overflowX": "auto"},
+            style_cell={"padding": "6px", "fontFamily": "system-ui", "fontSize": 12, "whiteSpace": "normal"},
+            style_header={"fontWeight": "600"},
+        )
+
+        return (
+            f"{count}",
+            f"{current_avg:,.0f}".replace(",", " "),
+            growth_abs_text,
+            growth_pct_text,
+            roi_text,
+            roi_annual_text,
+            fig,
+            f"Аналоги: {count} записей по проекту «{project}». Оценочное окно: {valuation_rule} (сделок: {valuation_df.height}).",
+            tbl,
+        )
+
+    @app.callback(
+        Output("pg_city", "options"),
+        Output("pg_district", "options"),
+        Output("pg_type_lot", "options"),
+        Input("pg_deals_source", "value"),
+        Input("pg_agglomeration", "value"),
+        Input("pg_year", "value"),
+    )
+    def _project_growth_dimension_options(deals_source: str, agglomeration: str, year: int | None):
+        cities, districts, types = project_growth_dimension_options(
+            df,
+            deals_source=deals_source,
+            agglomeration=agglomeration,
+            year=year,
+        )
+        return (
+            [{"label": c, "value": c} for c in cities],
+            [{"label": d, "value": d} for d in districts],
+            [{"label": t, "value": t} for t in types],
+        )
+
+    @app.callback(
+        Output("pg_fig_growth_budget_pct", "figure"),
+        Output("pg_fig_growth_sqm_pct", "figure"),
+        Output("pg_fig_room_growth", "figure"),
+        Output("pg_table_status", "children"),
+        Output("pg_table_container", "children"),
+        Input("pg_deals_source", "value"),
+        Input("pg_year", "value"),
+        Input("pg_agglomeration", "value"),
+        Input("pg_city", "value"),
+        Input("pg_district", "value"),
+        Input("pg_type_lot", "value"),
+        Input("pg_mortgage_mode", "value"),
+        Input("pg_data_quality_flags", "value"),
+    )
+    def _update_project_growth_tab(
+        deals_source: str,
+        year: int | None,
+        agglomeration: str,
+        cities_sel: list[str],
+        districts_sel: list[str],
+        type_lot_sel: list[str],
+        mortgage_mode: str,
+        data_quality_flags: list[str],
+    ):
+        dff = filter_project_growth_deals(
+            df,
+            deals_source=deals_source,
+            year=year,
+            agglomeration=agglomeration,
+            cities_sel=cities_sel,
+            districts_sel=districts_sel,
+            type_lot_sel=type_lot_sel,
+            mortgage_mode=mortgage_mode,
+            data_quality_flags=data_quality_flags,
+        )
+
+        empty = go.Figure()
+        empty.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320)
+        if dff.is_empty():
+            return empty, empty, empty, "Нет данных после фильтров.", dbc.Alert("Нет данных для расчета роста.", color="light")
+
+        project_growth = compute_project_growth(dff)
+        if project_growth.is_empty():
+            return empty, empty, empty, "Нет данных после фильтров.", dbc.Alert("Нет данных для расчета роста.", color="light")
+
+        top_budget = project_growth.sort("growth_budget_pct", descending=True).head(20)
+        fig_budget = go.Figure()
+        fig_budget.add_trace(
+            go.Bar(
+                x=top_budget["growth_budget_pct"].round(2).to_list(),
+                y=top_budget["object"].to_list(),
+                orientation="h",
+                hovertemplate="Проект=%{y}<br>Рост бюджета=%{x:.2f}%<extra></extra>",
+            )
+        )
+        fig_budget.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=380, yaxis=dict(autorange="reversed"))
+
+        top_sqm = project_growth.sort("growth_sqm_pct", descending=True).head(20)
+        fig_sqm = go.Figure()
+        fig_sqm.add_trace(
+            go.Bar(
+                x=top_sqm["growth_sqm_pct"].round(2).to_list(),
+                y=top_sqm["object"].to_list(),
+                orientation="h",
+                hovertemplate="Проект=%{y}<br>Рост цены м²=%{x:.2f}%<extra></extra>",
+            )
+        )
+        fig_sqm.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=380, yaxis=dict(autorange="reversed"))
+
+        room_growth = compute_room_growth(dff)
+        fig_room = go.Figure()
+        fig_room.add_trace(
+            go.Bar(
+                x=room_growth["room_group"].to_list(),
+                y=room_growth["growth_pct"].round(2).to_list(),
+                hovertemplate="Тип=%{x}<br>Рост цены м²=%{y:.2f}%<extra></extra>",
+            )
+        )
+        fig_room.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320, yaxis_title="Рост цены м², %")
+
+        view = (
+            project_growth.select(
+                [
+                    pl.col("object").alias("Проект"),
+                    pl.col("deals_total").alias("Сделок"),
+                    pl.col("first_month").alias("Первый месяц"),
+                    pl.col("last_month").alias("Последний месяц"),
+                    pl.col("first_budget").round(0).alias("Бюджет старт, ₽"),
+                    pl.col("last_budget").round(0).alias("Бюджет текущий, ₽"),
+                    pl.col("growth_budget_abs").round(0).alias("Рост бюджета, ₽"),
+                    pl.col("growth_budget_pct").round(2).alias("Рост бюджета, %"),
+                    pl.col("first_sqm").round(0).alias("Цена м² старт, ₽"),
+                    pl.col("last_sqm").round(0).alias("Цена м² текущая, ₽"),
+                    pl.col("growth_sqm_abs").round(0).alias("Рост цены м², ₽"),
+                    pl.col("growth_sqm_pct").round(2).alias("Рост цены м², %"),
+                ]
+            )
+            .sort("Рост бюджета, %", descending=True)
+            .head(300)
+        )
+        tbl = dash_table.DataTable(
+            data=view.to_dicts(),
+            columns=[{"name": c, "id": c} for c in view.columns],
+            page_size=15,
+            sort_action="native",
+            filter_action="native",
+            style_table={"overflowX": "auto"},
+            style_cell={"padding": "6px", "fontFamily": "system-ui", "fontSize": 12, "whiteSpace": "normal"},
+            style_header={"fontWeight": "600"},
+        )
+
+        status = f"Проектов в расчете: {project_growth.height}. Показаны лидеры роста."
+        return fig_budget, fig_sqm, fig_room, status, tbl
 
     return app
 

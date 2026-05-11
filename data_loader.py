@@ -67,6 +67,8 @@ def load_deals(cfg: Optional[DataConfig] = None) -> pl.DataFrame:
             pl.col("est_budget").cast(pl.Float64, strict=False).alias("est_budget"),
             pl.col("price_square_r").cast(pl.Float64, strict=False).alias("price_sqm"),
             pl.col("do_square").cast(pl.Float64, strict=False).alias("area_sqm"),
+            pl.lit(None).cast(pl.Float64).alias("floor_num"),
+            pl.lit(None).cast(pl.Float64).alias("rooms_count"),
         ]
     )
 
@@ -107,6 +109,10 @@ def load_deals(cfg: Optional[DataConfig] = None) -> pl.DataFrame:
             .then(pl.lit("Сочи"))
             .otherwise(pl.lit("без групп"))
             .alias("agglomeration"),
+            pl.when(pl.col("type_lot").str.to_lowercase().fill_null("").str.contains("студ"))
+            .then(pl.lit("Студии"))
+            .otherwise(pl.lit("Не определено"))
+            .alias("room_group"),
         ]
     )
 
@@ -143,6 +149,30 @@ def load_crimea_deals(path: Optional[str] = None) -> pl.DataFrame:
             .str.replace_all(",", ".")
             .cast(pl.Float64, strict=False)
             .alias("est_budget"),
+            pl.col("Площадь согласно ПД")
+            .cast(pl.Utf8)
+            .str.replace_all(r"[\s\u00A0]", "")
+            .str.replace_all(",", ".")
+            .cast(pl.Float64, strict=False)
+            .alias("area_pd"),
+            pl.col("Площадь согласно ЕГРН")
+            .cast(pl.Utf8)
+            .str.replace_all(r"[\s\u00A0]", "")
+            .str.replace_all(",", ".")
+            .cast(pl.Float64, strict=False)
+            .alias("area_egrn"),
+            pl.col("Этаж")
+            .cast(pl.Utf8)
+            .str.replace_all(r"[\s\u00A0]", "")
+            .str.replace_all(",", ".")
+            .cast(pl.Float64, strict=False)
+            .alias("floor_num"),
+            pl.col("Количество комнат")
+            .cast(pl.Utf8)
+            .str.replace_all(r"[\s\u00A0]", "")
+            .str.replace_all(",", ".")
+            .cast(pl.Float64, strict=False)
+            .alias("rooms_count"),
         ]
     )
 
@@ -162,10 +192,30 @@ def load_crimea_deals(path: Optional[str] = None) -> pl.DataFrame:
             pl.col("sold_date").dt.strftime("%Y-%m").alias("sold_month"),
             (pl.col("ipoteka_raw") == "Ипотека").fill_null(False).alias("is_mortgage"),
             pl.lit("Крым").alias("agglomeration"),
+            pl.when(pl.col("area_pd").is_not_null() & (pl.col("area_pd") > 0))
+            .then(pl.col("area_pd"))
+            .otherwise(pl.col("area_egrn"))
+            .alias("area_sqm"),
+            pl.when(pl.col("rooms_count").is_null())
+            .then(
+                pl.when(pl.col("type_lot").str.to_lowercase().fill_null("").str.contains("студ"))
+                .then(pl.lit("Студии"))
+                .otherwise(pl.lit("Не определено"))
+            )
+            .when(pl.col("rooms_count") <= 0)
+            .then(pl.lit("Студии"))
+            .when(pl.col("rooms_count") < 1.5)
+            .then(pl.lit("1-комнатные"))
+            .when(pl.col("rooms_count") < 2.5)
+            .then(pl.lit("2-комнатные"))
+            .when(pl.col("rooms_count") < 3.5)
+            .then(pl.lit("3-комнатные"))
+            .otherwise(pl.lit("4+ комнатные"))
+            .alias("room_group"),
         ]
     )
 
-    df = df.drop(["date_sold_raw", "ipoteka_raw"], strict=False)
+    df = df.drop(["date_sold_raw", "ipoteka_raw", "area_pd", "area_egrn"], strict=False)
     return df
 
 

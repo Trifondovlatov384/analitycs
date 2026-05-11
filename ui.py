@@ -459,6 +459,17 @@ def layout() -> dbc.Container:
                                         "Сравнение комплексов: средний бюджет и средняя цена м²",
                                         className="h6",
                                     ),
+                                    html.Div(
+                                        "Клик по точке добавляет/убирает комплекс из выбора. Можно закрепить несколько точек.",
+                                        className="text-muted mb-2",
+                                    ),
+                                    dbc.Button(
+                                        "Сбросить выбранные точки",
+                                        id="cmp_clear_selected",
+                                        color="light",
+                                        size="sm",
+                                        className="me-2 mb-2",
+                                    ),
                                     dbc.Button(
                                         "На весь экран",
                                         id="cmp_open_fullscreen",
@@ -469,6 +480,7 @@ def layout() -> dbc.Container:
                                     dcc.Graph(id="cmp_fig_complex_compare", config={"displayModeBar": False}),
                                     html.Hr(className="my-3"),
                                     html.Div(id="cmp_tbl_complex_compare"),
+                                    dcc.Store(id="cmp_selected_complexes", data=[]),
                                 ]
                             ),
                             className="shadow-sm",
@@ -707,6 +719,120 @@ def layout() -> dbc.Container:
                         className="mt-3",
                     ),
                 ],
+            ),
+        ],
+        fluid=True,
+        className="pb-5",
+    )
+
+    new_heatmap_tab = dbc.Container(
+        [
+            dbc.Row(
+                [
+                    dbc.Col(
+                        [
+                            html.H3("Теплокарта 2"),
+                            html.Div(
+                                "Комплексы слева, месяцы справа, цвет — количество сделок. "
+                                "Фильтры без режима матрицы и без агломерации.",
+                                className="text-muted",
+                            ),
+                        ],
+                        md=12,
+                    )
+                ],
+                className="mt-4",
+            ),
+            dbc.Row(
+                [
+                    dbc.Col(
+                        dbc.Card(
+                            dbc.CardBody(
+                                [
+                                    html.Div("Фильтры", className="h5 mb-3"),
+                                    dbc.Label("Год"),
+                                    dcc.Dropdown(id="nh_year", options=[], value=None, clearable=True),
+                                    dbc.Label("Город", className="mt-3"),
+                                    dcc.Dropdown(
+                                        id="nh_city",
+                                        options=[],
+                                        value=None,
+                                        clearable=True,
+                                        placeholder="Если пусто — все города",
+                                    ),
+                                    dbc.Label("Район (мультивыбор)", className="mt-3"),
+                                    dcc.Dropdown(
+                                        id="nh_district",
+                                        options=[],
+                                        value=[],
+                                        multi=True,
+                                        placeholder="Если пусто — все районы",
+                                    ),
+                                    dbc.Label("Тип объекта (квартира/апартаменты)", className="mt-3"),
+                                    dcc.Dropdown(
+                                        id="nh_type_lot",
+                                        options=[],
+                                        value=[],
+                                        multi=True,
+                                        placeholder="Если пусто — все типы",
+                                    ),
+                                    dbc.Label("Расчёт по сделкам", className="mt-3"),
+                                    dcc.RadioItems(
+                                        id="nh_mortgage_mode",
+                                        options=[
+                                            {"label": "Все", "value": "all"},
+                                            {"label": "Ипотека", "value": "mortgage"},
+                                            {"label": "Не ипотека", "value": "non_mortgage"},
+                                        ],
+                                        value="all",
+                                        className="mt-1",
+                                    ),
+                                    dbc.Label("Качество данных", className="mt-3"),
+                                    dbc.Checklist(
+                                        id="nh_data_quality_flags",
+                                        options=[
+                                            {"label": "Исключать оптовые сделки (Крым)", "value": "exclude_wholesale"},
+                                            {"label": "Только сделки с известным бюджетом", "value": "known_budget_only"},
+                                        ],
+                                        value=["exclude_wholesale", "known_budget_only"],
+                                        switch=True,
+                                        className="mt-1",
+                                    ),
+                                    dbc.Label("Топ комплексов", className="mt-3"),
+                                    dcc.Slider(
+                                        id="nh_top_n",
+                                        min=10,
+                                        max=100,
+                                        step=5,
+                                        value=40,
+                                        marks={10: "10", 25: "25", 40: "40", 60: "60", 100: "100"},
+                                    ),
+                                    dbc.FormText(
+                                        "Цветовая шкала обрезает экстремумы (квантили), чтобы середина распределения читалась лучше.",
+                                        className="mt-2",
+                                    ),
+                                ]
+                            ),
+                            className="shadow-sm",
+                        ),
+                        md=4,
+                        className="mt-3",
+                    ),
+                    dbc.Col(
+                        dbc.Card(
+                            dbc.CardBody(
+                                [
+                                    html.Div("Сделки по месяцам", className="h6"),
+                                    dcc.Graph(id="nh_fig_heatmap", config={"displayModeBar": False}),
+                                ]
+                            ),
+                            className="shadow-sm",
+                        ),
+                        md=8,
+                        className="mt-3",
+                    ),
+                ],
+                className="g-3",
             ),
         ],
         fluid=True,
@@ -973,9 +1099,48 @@ def layout() -> dbc.Container:
                                         ],
                                         className="g-3",
                                     ),
+                                    dbc.Row(
+                                        [
+                                            dbc.Col(
+                                                [
+                                                    dbc.Label("Строк на страницу"),
+                                                    dcc.Dropdown(
+                                                        id="egrz_page_size",
+                                                        options=[
+                                                            {"label": "10", "value": "10"},
+                                                            {"label": "30", "value": "30"},
+                                                            {"label": "100", "value": "100"},
+                                                            {"label": "Все", "value": "all"},
+                                                        ],
+                                                        value="30",
+                                                        clearable=False,
+                                                    ),
+                                                ],
+                                                md=3,
+                                            ),
+                                            dbc.Col(
+                                                [
+                                                    dbc.Label("Колонки"),
+                                                    dbc.Checklist(
+                                                        id="egrz_show_all_fields",
+                                                        options=[{"label": "Показать все поля", "value": "all_fields"}],
+                                                        value=[],
+                                                        switch=True,
+                                                        className="mt-1",
+                                                    ),
+                                                ],
+                                                md=5,
+                                            ),
+                                        ],
+                                        className="g-3 mt-1",
+                                    ),
                                     html.Hr(),
                                     html.Div(id="egrz_table_status", className="mb-2"),
                                     html.Div(id="egrz_table_container"),
+                                    html.Hr(),
+                                    html.Div("Сводка по городам", className="h6 mb-2"),
+                                    html.Div(id="egrz_city_table_status", className="mb-2"),
+                                    html.Div(id="egrz_city_table_container"),
                                 ]
                             ),
                             className="shadow-sm",
@@ -984,6 +1149,309 @@ def layout() -> dbc.Container:
                         className="mt-3",
                     ),
                 ]
+            ),
+        ],
+        fluid=True,
+        className="pb-5",
+    )
+
+    lot_growth_tab = dbc.Container(
+        [
+            dbc.Row(
+                [
+                    dbc.Col(
+                        [
+                            html.H3("Оценка роста лота"),
+                            html.Div(
+                                "Вы выбираете проект и вводите параметры своей покупки, система подбирает аналоги и считает текущую рыночную динамику.",
+                                className="text-muted",
+                            ),
+                        ],
+                        md=12,
+                    )
+                ],
+                className="mt-4",
+            ),
+            dbc.Row(
+                [
+                    dbc.Col(
+                        dbc.Card(
+                            dbc.CardBody(
+                                [
+                                    html.Div("Параметры вашей покупки", className="h5 mb-3"),
+                                    dbc.Label("Проект"),
+                                    dcc.Dropdown(id="lg_project", options=[], value=None, placeholder="Выберите проект..."),
+                                    dbc.Label("Дата приобретения", className="mt-3"),
+                                    dcc.DatePickerSingle(
+                                        id="lg_purchase_date",
+                                        display_format="YYYY-MM-DD",
+                                        placeholder="Выберите дату",
+                                    ),
+                                    dbc.Label("Стоимость приобретения, ₽", className="mt-3"),
+                                    dbc.Input(
+                                        id="lg_purchase_price",
+                                        type="text",
+                                        placeholder="Например: 14461610 или 14 461 610",
+                                    ),
+                                    dbc.Label("Площадь, м²", className="mt-3"),
+                                    dbc.Input(id="lg_purchase_area", type="text", placeholder="Например: 29.9 или 29,9"),
+                                    dbc.Label("Этаж", className="mt-3"),
+                                    dbc.Input(id="lg_purchase_floor", type="text", placeholder="Например: 5"),
+                                    dbc.Label("Расходы на продажу, %", className="mt-3"),
+                                    dbc.Input(id="lg_sell_cost_pct", type="text", value="3"),
+                                    dbc.Label("Допуск по площади, %", className="mt-3"),
+                                    dcc.Slider(
+                                        id="lg_area_tolerance_pct",
+                                        min=3,
+                                        max=30,
+                                        step=1,
+                                        value=10,
+                                        marks={3: "3%", 10: "10%", 20: "20%", 30: "30%"},
+                                    ),
+                                    dbc.Label("Допуск по этажу, +/-", className="mt-3"),
+                                    dcc.Slider(
+                                        id="lg_floor_tolerance",
+                                        min=0,
+                                        max=10,
+                                        step=1,
+                                        value=2,
+                                        marks={0: "0", 2: "2", 5: "5", 10: "10"},
+                                    ),
+                                ]
+                            ),
+                            className="shadow-sm",
+                        ),
+                        md=4,
+                        className="mt-3",
+                    ),
+                    dbc.Col(
+                        [
+                            dbc.Row(
+                                [
+                                    dbc.Col(kpi_card("Найдено аналогов", "lg_kpi_count"), md=3),
+                                    dbc.Col(kpi_card("Текущая средняя цена, ₽", "lg_kpi_current_price"), md=3),
+                                    dbc.Col(kpi_card("Рост, ₽", "lg_kpi_growth_abs"), md=3),
+                                    dbc.Col(kpi_card("Рост, %", "lg_kpi_growth_pct"), md=3),
+                                    dbc.Col(kpi_card("ROI при продаже сейчас, %", "lg_kpi_roi_pct"), md=3),
+                                    dbc.Col(kpi_card("ROI annualized, %/год", "lg_kpi_roi_annual_pct"), md=3),
+                                ],
+                                className="mt-3 g-3",
+                            ),
+                            dbc.Row(
+                                [
+                                    dbc.Col(
+                                        dbc.Card(
+                                            dbc.CardBody(
+                                                [
+                                                    html.Div("Динамика средних цен аналогов по месяцам", className="h6"),
+                                                    dcc.Graph(id="lg_price_trend", config={"displayModeBar": False}),
+                                                ]
+                                            ),
+                                            className="shadow-sm",
+                                        ),
+                                        md=12,
+                                        className="mt-3",
+                                    )
+                                ]
+                            ),
+                            dbc.Row(
+                                [
+                                    dbc.Col(
+                                        dbc.Card(
+                                            dbc.CardBody(
+                                                [
+                                                    html.Div("Сделки по аналогичным лотам", className="h6"),
+                                                    html.Div(id="lg_table_status", className="mb-2"),
+                                                    dcc.Dropdown(
+                                                        id="lg_page_size",
+                                                        options=[
+                                                            {"label": "10", "value": 10},
+                                                            {"label": "30", "value": 30},
+                                                            {"label": "100", "value": 100},
+                                                        ],
+                                                        value=30,
+                                                        clearable=False,
+                                                        style={"maxWidth": "180px"},
+                                                    ),
+                                                    html.Div(id="lg_table_container", className="mt-2"),
+                                                ]
+                                            ),
+                                            className="shadow-sm",
+                                        ),
+                                        md=12,
+                                        className="mt-3",
+                                    )
+                                ]
+                            ),
+                        ],
+                        md=8,
+                    ),
+                ],
+                className="g-3",
+            ),
+        ],
+        fluid=True,
+        className="pb-5",
+    )
+
+    project_growth_tab = dbc.Container(
+        [
+            dbc.Row(
+                [
+                    dbc.Col(
+                        [
+                            html.H3("Рост стоимости по проектам"),
+                            html.Div(
+                                "Рост стоимости лотов и цены за м² по проектам и типам (студии/1к/2к/3к и т.д.) с фильтрами как в теплокарте.",
+                                className="text-muted",
+                            ),
+                        ],
+                        md=12,
+                    )
+                ],
+                className="mt-4",
+            ),
+            dbc.Row(
+                [
+                    dbc.Col(
+                        dbc.Card(
+                            dbc.CardBody(
+                                [
+                                    html.Div("Фильтры (рост проектов)", className="h5 mb-3"),
+                                    dbc.Label("Источник сделок"),
+                                    dcc.Dropdown(
+                                        id="pg_deals_source",
+                                        options=[
+                                            {"label": "Все", "value": "all"},
+                                            {"label": "Основной файл", "value": "main"},
+                                            {"label": "Крым", "value": "crimea"},
+                                        ],
+                                        value="crimea",
+                                        clearable=False,
+                                    ),
+                                    dbc.Label("Агломерация", className="mt-3"),
+                                    dcc.Dropdown(
+                                        id="pg_agglomeration",
+                                        options=[
+                                            {"label": "Все", "value": "all"},
+                                            {"label": "Анапа", "value": "Анапа"},
+                                            {"label": "Сочи", "value": "Сочи"},
+                                            {"label": "Крым", "value": "Крым"},
+                                            {"label": "Без групп", "value": "без групп"},
+                                        ],
+                                        value="all",
+                                        clearable=False,
+                                    ),
+                                    dbc.Label("Год", className="mt-3"),
+                                    dcc.Dropdown(id="pg_year", options=[], value=None, clearable=False),
+                                    dbc.Label("Город", className="mt-3"),
+                                    dcc.Dropdown(id="pg_city", options=[], value=[], multi=True),
+                                    dbc.Label("Район", className="mt-3"),
+                                    dcc.Dropdown(id="pg_district", options=[], value=[], multi=True),
+                                    dbc.Label("Тип объекта", className="mt-3"),
+                                    dcc.Dropdown(id="pg_type_lot", options=[], value=[], multi=True),
+                                    dbc.Label("Ипотека", className="mt-3"),
+                                    dcc.RadioItems(
+                                        id="pg_mortgage_mode",
+                                        options=[
+                                            {"label": "Все", "value": "all"},
+                                            {"label": "Ипотека", "value": "mortgage"},
+                                            {"label": "Не ипотека", "value": "non_mortgage"},
+                                        ],
+                                        value="all",
+                                        className="mt-1",
+                                    ),
+                                    dbc.Label("Качество данных", className="mt-3"),
+                                    dbc.Checklist(
+                                        id="pg_data_quality_flags",
+                                        options=[
+                                            {"label": "Исключать оптовые сделки (Крым)", "value": "exclude_wholesale"},
+                                            {"label": "Только сделки с известным бюджетом", "value": "known_budget_only"},
+                                        ],
+                                        value=["exclude_wholesale", "known_budget_only"],
+                                        switch=True,
+                                        className="mt-1",
+                                    ),
+                                ]
+                            ),
+                            className="shadow-sm",
+                        ),
+                        md=4,
+                        className="mt-3",
+                    ),
+                    dbc.Col(
+                        [
+                            dbc.Row(
+                                [
+                                    dbc.Col(
+                                        dbc.Card(
+                                            dbc.CardBody(
+                                                [
+                                                    html.Div("Топ проектов по росту бюджета, %", className="h6"),
+                                                    dcc.Graph(id="pg_fig_growth_budget_pct", config={"displayModeBar": False}),
+                                                ]
+                                            ),
+                                            className="shadow-sm",
+                                        ),
+                                        md=6,
+                                        className="mt-3",
+                                    ),
+                                    dbc.Col(
+                                        dbc.Card(
+                                            dbc.CardBody(
+                                                [
+                                                    html.Div("Топ проектов по росту цены м², %", className="h6"),
+                                                    dcc.Graph(id="pg_fig_growth_sqm_pct", config={"displayModeBar": False}),
+                                                ]
+                                            ),
+                                            className="shadow-sm",
+                                        ),
+                                        md=6,
+                                        className="mt-3",
+                                    ),
+                                ],
+                                className="g-3",
+                            ),
+                            dbc.Row(
+                                [
+                                    dbc.Col(
+                                        dbc.Card(
+                                            dbc.CardBody(
+                                                [
+                                                    html.Div("Рост по комнатности (студии/1к/2к/3к/4+)", className="h6"),
+                                                    dcc.Graph(id="pg_fig_room_growth", config={"displayModeBar": False}),
+                                                ]
+                                            ),
+                                            className="shadow-sm",
+                                        ),
+                                        md=12,
+                                        className="mt-3",
+                                    ),
+                                ]
+                            ),
+                            dbc.Row(
+                                [
+                                    dbc.Col(
+                                        dbc.Card(
+                                            dbc.CardBody(
+                                                [
+                                                    html.Div("Таблица наибольшего роста стоимости", className="h6"),
+                                                    html.Div(id="pg_table_status", className="mb-2"),
+                                                    html.Div(id="pg_table_container"),
+                                                ]
+                                            ),
+                                            className="shadow-sm",
+                                        ),
+                                        md=12,
+                                        className="mt-3",
+                                    ),
+                                ]
+                            ),
+                        ],
+                        md=8,
+                    ),
+                ],
+                className="g-3",
             ),
         ],
         fluid=True,
@@ -1001,7 +1469,10 @@ def layout() -> dbc.Container:
                     dcc.Tab(label="Сравнение", value="tab_compare", children=compare_tab),
                     dcc.Tab(label="Эйлер", value="tab_euler", children=euler_tab),
                     dcc.Tab(label="Теплокарта", value="tab_heatmap", children=heatmap_tab),
+                    dcc.Tab(label="Теплокарта 2", value="tab_heatmap2", children=new_heatmap_tab),
                     dcc.Tab(label="ЕГРЗ Парсер", value="tab_egrz", children=egrz_tab),
+                    dcc.Tab(label="Рост лота", value="tab_lot_growth", children=lot_growth_tab),
+                    dcc.Tab(label="Рост проектов", value="tab_project_growth", children=project_growth_tab),
                 ],
             )
         ],

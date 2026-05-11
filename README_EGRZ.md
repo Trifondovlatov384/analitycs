@@ -30,6 +30,7 @@
 
 ## Файлы
 
+- `scripts/egrz_text_analysis.py` - отдельный модуль анализа текста/предложений (нормализация, поиск ключей, fuzzy, фильтрация).
 - `scripts/egrz_common.py` - общие функции (парсинг, фильтры, дедуп, state, mind-map).
 - `scripts/egrz_analyze_csv.py` - разовый анализ локального CSV.
 - `scripts/egrz_monitor.py` - регулярный мониторинг и Telegram.
