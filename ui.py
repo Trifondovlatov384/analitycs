@@ -54,7 +54,7 @@ def layout() -> dbc.Container:
                         dbc.Alert(
                             [
                                 html.Div(
-                                    "Подсказка: чтобы посмотреть агрегаты “Анапа” или “Сочи”, выберите их в фильтре “Агломерация”.",
+                                    "Подсказка: для фильтра по региону используйте «Агломерация» (Анапа, Сочи, Крым и т.д.).",
                                 ),
                             ],
                             color="light",
@@ -89,6 +89,7 @@ def layout() -> dbc.Container:
                                             {"label": "Все", "value": "all"},
                                             {"label": "Анапа", "value": "Анапа"},
                                             {"label": "Сочи", "value": "Сочи"},
+                                            {"label": "Крым", "value": "Крым"},
                                             {"label": "Без групп", "value": "без групп"},
                                         ],
                                         value="all",
@@ -286,6 +287,7 @@ def layout() -> dbc.Container:
                                             {"label": "Все", "value": "all"},
                                             {"label": "Анапа", "value": "Анапа"},
                                             {"label": "Сочи", "value": "Сочи"},
+                                            {"label": "Крым", "value": "Крым"},
                                             {"label": "Без групп", "value": "без групп"},
                                         ],
                                         value="all",
@@ -420,6 +422,7 @@ def layout() -> dbc.Container:
                                             {"label": "Все", "value": "all"},
                                             {"label": "Анапа", "value": "Анапа"},
                                             {"label": "Сочи", "value": "Сочи"},
+                                            {"label": "Крым", "value": "Крым"},
                                             {"label": "Без групп", "value": "без групп"},
                                         ],
                                         value="all",
@@ -460,7 +463,7 @@ def layout() -> dbc.Container:
                                         className="h6",
                                     ),
                                     html.Div(
-                                        "Клик по точке добавляет/убирает комплекс из выбора. Можно закрепить несколько точек.",
+                                        "Клик по точке закрепляет синий блок с тем же текстом, что и в hover (несколько кликов — несколько блоков). Наведение мыши по-прежнему показывает hover.",
                                         className="text-muted mb-2",
                                     ),
                                     dbc.Button(
@@ -547,7 +550,7 @@ def layout() -> dbc.Container:
                                     dcc.Dropdown(
                                         id="h_source",
                                         options=[
-                                            {"label": "Основные сделки (Analitic.csv)", "value": "deals"},
+                                            {"label": "Основные сделки (CSV сделок)", "value": "deals"},
                                             {"label": "Крым (матрица, как в примере)", "value": "matrix_crimea"},
                                         ],
                                         value="deals",
@@ -571,6 +574,7 @@ def layout() -> dbc.Container:
                                             {"label": "Все", "value": "all"},
                                             {"label": "Анапа", "value": "Анапа"},
                                             {"label": "Сочи", "value": "Сочи"},
+                                            {"label": "Крым", "value": "Крым"},
                                             {"label": "Без групп", "value": "без групп"},
                                         ],
                                         value="all",
@@ -578,7 +582,7 @@ def layout() -> dbc.Container:
                                     ),
                                     dbc.Label("Год", className="mt-3"),
                                     dcc.Dropdown(id="h_year", options=[], value=None, clearable=False),
-                                    dbc.Label("Город (для Analitic.csv)", className="mt-3"),
+                                    dbc.Label("Город (основной CSV)", className="mt-3"),
                                     dcc.Dropdown(
                                         id="h_city",
                                         options=[],
@@ -1212,7 +1216,7 @@ def layout() -> dbc.Container:
                                             {"label": "Основной файл", "value": "main"},
                                             {"label": "Крым", "value": "crimea"},
                                         ],
-                                        value="crimea",
+                                        value="all",
                                         clearable=False,
                                     ),
                                     dbc.Label("Агломерация", className="mt-3"),

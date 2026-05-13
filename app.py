@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import html as html_escape
 import io
 import math
 import os
@@ -28,7 +29,14 @@ from aggregations import (
     monthly_deal_counts,
     yearly_top_complexes,
 )
-from data_loader import list_sorted, load_crimea_deals, load_deals, resolve_data_path
+from data_loader import (
+    list_sorted,
+    load_crimea_deals,
+    load_deals,
+    paths_point_to_same_file,
+    resolve_crimea_path,
+    resolve_data_path,
+)
 from heatmap_loader import load_matrix_csv
 from project_growth_logic import (
     compute_project_growth,
@@ -387,6 +395,100 @@ def make_complex_monthly_figure(df_monthly: pl.DataFrame, *, complex_name: str |
     return fig
 
 
+def _compare_pinned_annotations(df_cmp: pl.DataFrame, selected_objects: list[str]) -> list[dict]:
+    """
+    Закреплённые подписи в стиле hover: текст в координатах данных, стрелка к точке (x,y)->(ax,ay)
+    в тех же осях — так блоки стабильно видны в Dash/браузере (pixel-axref часто «теряется»).
+    Раскладка: золотой угол + кольца в долях диапазона осей, чтобы подписи реже перекрывали друг друга.
+    """
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for raw_name in selected_objects:
+        if not isinstance(raw_name, str):
+            continue
+        name = raw_name.strip()
+        if not name or name in seen:
+            continue
+        hit = df_cmp.filter(pl.col("object") == name).head(1)
+        if hit.is_empty():
+            continue
+        rows.append(hit.to_dicts()[0])
+        seen.add(name)
+
+    if not rows:
+        return []
+
+    xs = [float(r["avg_price_sqm"]) for r in rows]
+    ys = [float(r["avg_budget"]) for r in rows]
+    mx = sum(xs) / len(xs)
+    my = sum(ys) / len(ys)
+
+    span_x = max(xs) - min(xs)
+    if not math.isfinite(span_x) or span_x <= 0:
+        span_x = max(abs(mx) * 0.08, 50_000.0)
+    span_y = max(ys) - min(ys)
+    if not math.isfinite(span_y) or span_y <= 0:
+        span_y = max(abs(my) * 0.08, 500_000.0)
+
+    golden = math.pi * (3.0 - math.sqrt(5.0))
+    ordered = sorted(rows, key=lambda r: math.atan2(float(r["avg_budget"]) - my, float(r["avg_price_sqm"]) - mx))
+
+    annotations: list[dict] = []
+    font_size = 10 if len(rows) > 6 else 11
+    for k, r in enumerate(ordered):
+        xi = float(r["avg_price_sqm"])
+        yi = float(r["avg_budget"])
+        angle = k * golden
+        ring = 1.0 + (k // 7) * 0.42
+        tx = xi + span_x * 0.06 * ring * math.cos(angle)
+        ty = yi + span_y * 0.06 * ring * math.sin(angle)
+
+        city = html_escape.escape(str(r.get("city") or ""))
+        dev = html_escape.escape(str(r.get("developer") or ""))
+        obj = html_escape.escape(str(r.get("object") or ""))
+        try:
+            deals_n = int(r.get("deals") or 0)
+        except (TypeError, ValueError):
+            deals_n = 0
+
+        # Как в hovertemplate графика (картинка 1)
+        text = (
+            f"Комплекс={obj}<br>"
+            f"Город={city}<br>"
+            f"Девелопер={dev}<br>"
+            f"Сделок={deals_n}<br>"
+            f"Средняя цена м²={xi:,.0f} ₽<br>"
+            f"Средний бюджет={yi:,.0f} ₽"
+        )
+
+        annotations.append(
+            dict(
+                x=tx,
+                y=ty,
+                ax=xi,
+                ay=yi,
+                xref="x",
+                yref="y",
+                axref="x",
+                ayref="y",
+                text=text,
+                showarrow=True,
+                arrowhead=2,
+                arrowwidth=1.4,
+                arrowcolor="rgba(30, 64, 175, 0.9)",
+                standoff=10,
+                bgcolor="rgba(37, 99, 235, 0.92)",
+                bordercolor="#1e3a8a",
+                borderwidth=1,
+                borderpad=7,
+                font=dict(color="white", size=font_size),
+                align="left",
+                captureevents=False,
+            )
+        )
+    return annotations
+
+
 def make_complex_compare_figure(
     df_cmp: pl.DataFrame,
     *,
@@ -430,12 +532,12 @@ def make_complex_compare_figure(
         mode="markers",
         marker=dict(size=sizes, opacity=0.75),
         text=top["object"].to_list(),
-        customdata=top.select(["city", "developer", "deals"]).to_numpy(),
+        customdata=top.select(["object", "city", "developer", "deals"]).to_numpy(),
         hovertemplate=(
-            "Комплекс=%{text}"
-            "<br>Город=%{customdata[0]}"
-            "<br>Девелопер=%{customdata[1]}"
-            "<br>Сделок=%{customdata[2]}"
+            "Комплекс=%{customdata[0]}"
+            "<br>Город=%{customdata[1]}"
+            "<br>Девелопер=%{customdata[2]}"
+            "<br>Сделок=%{customdata[3]}"
             "<br>Средняя цена м²=%{x:,.0f} ₽"
             "<br>Средний бюджет=%{y:,.0f} ₽"
             "<extra></extra>"
@@ -444,16 +546,23 @@ def make_complex_compare_figure(
     # Plotly: при selectedpoints=[] и заданном unselected все точки становятся «нес выбранными» и почти исчезают.
     if selected_points:
         scatter_kw["selectedpoints"] = selected_points
-        scatter_kw["selected"] = dict(marker=dict(opacity=1.0, line=dict(color="#111827", width=2)))
+        scatter_kw["selected"] = dict(marker=dict(opacity=1.0, color="#1d4ed8"))
         scatter_kw["unselected"] = dict(marker=dict(opacity=0.28))
 
     fig.add_trace(go.Scatter(**scatter_kw))
+
+    selected_order = [x for x in (selected_objects or []) if isinstance(x, str) and x.strip()]
+    pins = _compare_pinned_annotations(df_cmp, selected_order)
+    # Запас справа, чтобы длинные подписи не обрезались
+    margin_r = 160 if pins else 10
+
     fig.update_layout(
-        margin=dict(l=10, r=10, t=10, b=10),
+        margin=dict(l=10, r=margin_r, t=10, b=10),
         height=360,
         clickmode="event+select",
         xaxis_title="Средняя цена м², ₽",
         yaxis_title="Средний бюджет сделки, ₽",
+        annotations=pins,
     )
     return fig
 
@@ -596,10 +705,13 @@ def make_euler_figure(devs: list[str], sizes: dict[str, int], pair: dict[tuple[s
 
 def create_app() -> Dash:
     df_main = load_deals().with_columns(pl.lit("main").alias("source"))
-    try:
-        df_crimea = load_crimea_deals().with_columns(pl.lit("crimea").alias("source"))
-    except Exception:
+    if paths_point_to_same_file(resolve_data_path(), resolve_crimea_path()):
         df_crimea = pl.DataFrame({"source": []})
+    else:
+        try:
+            df_crimea = load_crimea_deals().with_columns(pl.lit("crimea").alias("source"))
+        except Exception:
+            df_crimea = pl.DataFrame({"source": []})
 
     df = pl.concat([df_main, df_crimea], how="diagonal")
     if "deal_status" not in df.columns:
@@ -1127,29 +1239,45 @@ def create_app() -> Dash:
     @app.callback(
         Output("cmp_selected_complexes", "data"),
         Input("cmp_fig_complex_compare", "clickData"),
+        Input("cmp_fig_complex_compare_full", "clickData"),
         Input("cmp_clear_selected", "n_clicks"),
         State("cmp_selected_complexes", "data"),
         prevent_initial_call=True,
     )
     def _toggle_compare_selected(
-        click_data: dict | None,
+        click_main: dict | None,
+        click_full: dict | None,
         clear_clicks: int | None,
         selected_complexes: list[str] | None,
     ):
         selected = [x for x in (selected_complexes or []) if isinstance(x, str) and x.strip()]
-        trigger = getattr(callback_context, "triggered", [])
-        trigger_id = ""
-        if trigger:
-            trigger_id = str(trigger[0].get("prop_id", "")).split(".")[0]
+        tid = getattr(callback_context, "triggered_id", None)
+        trigger_prop = ""
+        trig = getattr(callback_context, "triggered", [])
+        if trig:
+            trigger_prop = str(trig[0].get("prop_id", ""))
 
-        if trigger_id == "cmp_clear_selected":
+        if tid == "cmp_clear_selected" or trigger_prop.startswith("cmp_clear_selected"):
             return []
+
+        if tid == "cmp_fig_complex_compare_full":
+            click_data = click_full
+        elif tid == "cmp_fig_complex_compare":
+            click_data = click_main
+        else:
+            click_data = click_main or click_full
 
         if not click_data or "points" not in click_data or not click_data["points"]:
             raise PreventUpdate
 
         point = click_data["points"][0]
         object_name = point.get("text")
+        if not object_name:
+            cd = point.get("customdata")
+            if isinstance(cd, (list, tuple)) and len(cd) > 0 and cd[0]:
+                object_name = str(cd[0]).strip()
+            elif isinstance(cd, str) and cd.strip():
+                object_name = cd.strip()
         if not object_name:
             raise PreventUpdate
 
@@ -1445,8 +1573,22 @@ def create_app() -> Dash:
     @app.callback(
         Output("cmp_fig_complex_compare_full", "figure"),
         Input("cmp_fig_complex_compare", "figure"),
+        Input("cmp_fullscreen_modal", "is_open"),
+        State("cmp_fig_complex_compare", "figure"),
     )
-    def _sync_compare_figure_to_modal(fig: dict):
+    def _sync_compare_figure_to_modal(
+        fig_from_prop: dict | None,
+        modal_is_open: bool,
+        fig_state: dict | None,
+    ):
+        tid = getattr(callback_context, "triggered_id", None)
+        # При открытии модалки figure основного графика часто не меняется — подставляем актуальное из State.
+        if tid == "cmp_fullscreen_modal":
+            if not modal_is_open:
+                raise PreventUpdate
+            fig = fig_state or fig_from_prop
+        else:
+            fig = fig_from_prop or fig_state
         if not fig:
             raise PreventUpdate
         return fig

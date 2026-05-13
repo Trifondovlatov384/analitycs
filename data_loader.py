@@ -6,7 +6,8 @@ from typing import Iterable, Optional
 
 import polars as pl
 
-CRIMEA_PATH_DEFAULT = "bnMAP_pro_Сделки_Республика_Крым_10-04-2026_11-16_part1.xlsx - Sheet1.csv"
+CRIMEA_PATH_DEFAULT = "may2026.csv"
+MAIN_DATA_DEFAULT = "may2026.csv"
 
 ANAPA_CITIES = {
     "Варваровка с.",
@@ -35,7 +36,24 @@ def resolve_data_path() -> str:
     env_path = os.environ.get("DATA_PATH")
     if env_path:
         return env_path
-    return "Analitic.csv"
+    return MAIN_DATA_DEFAULT
+
+
+def _csv_has_bnmap_columns(path: str) -> bool:
+    cols = set(pl.read_csv(path, n_rows=0, ignore_errors=True).columns)
+    return "Проект" in cols and "Дата договора" in cols and "Тип ипотеки" in cols
+
+
+def paths_point_to_same_file(a: str, b: str) -> bool:
+    """Best-effort same underlying file (handles relative vs absolute)."""
+    aa = os.path.abspath(a)
+    bb = os.path.abspath(b)
+    if os.path.normcase(aa) == os.path.normcase(bb):
+        return True
+    try:
+        return os.path.normcase(os.path.realpath(aa)) == os.path.normcase(os.path.realpath(bb))
+    except OSError:
+        return False
 
 
 def resolve_crimea_path() -> str:
@@ -47,6 +65,9 @@ def resolve_crimea_path() -> str:
 
 def load_deals(cfg: Optional[DataConfig] = None) -> pl.DataFrame:
     cfg = cfg or DataConfig(data_path=resolve_data_path())
+
+    if _csv_has_bnmap_columns(cfg.data_path):
+        return load_bnmap_deals(cfg.data_path, force_crimea_agglomeration=False)
 
     df = pl.read_csv(
         cfg.data_path,
@@ -119,13 +140,18 @@ def load_deals(cfg: Optional[DataConfig] = None) -> pl.DataFrame:
     return df
 
 
-def load_crimea_deals(path: Optional[str] = None) -> pl.DataFrame:
+def load_bnmap_deals(path: str, *, force_crimea_agglomeration: bool) -> pl.DataFrame:
     """
-    Loads bnMAP Crimea deals export (CSV) and normalizes to the same schema as `load_deals()`.
-    Expected columns (RU): Проект, Город, Район, Девелопер, Тип объекта, Дата договора, Тип ипотеки, Расчетный бюджет объекта
+    bnMAP export (Russian column names) -> same schema as legacy `load_deals()` / Crimea loader.
+    Dates: DD.MM.YYYY in «Дата договора».
     """
-    p = path or resolve_crimea_path()
-    df = pl.read_csv(p, try_parse_dates=False, ignore_errors=True)
+    df = pl.read_csv(path, try_parse_dates=False, ignore_errors=True)
+
+    is_crimea_loc = (
+        pl.col("Локация").cast(pl.Utf8).fill_null("").str.contains("Крым")
+        if "Локация" in df.columns
+        else pl.lit(False)
+    )
 
     df = df.with_columns(
         [
@@ -176,7 +202,6 @@ def load_crimea_deals(path: Optional[str] = None) -> pl.DataFrame:
         ]
     )
 
-    # Parse date: expected DD.MM.YYYY
     df = df.with_columns(
         [
             pl.col("date_sold_raw")
@@ -185,17 +210,32 @@ def load_crimea_deals(path: Optional[str] = None) -> pl.DataFrame:
         ]
     )
 
+    if force_crimea_agglomeration:
+        agg = pl.lit("Крым").alias("agglomeration")
+    else:
+        agg = (
+            pl.when(pl.col("city").is_in(list(ANAPA_CITIES)))
+            .then(pl.lit("Анапа"))
+            .when(pl.col("city").is_in(list(SOCHI_CITIES)))
+            .then(pl.lit("Сочи"))
+            .when(is_crimea_loc)
+            .then(pl.lit("Крым"))
+            .otherwise(pl.lit("без групп"))
+            .alias("agglomeration")
+        )
+
     df = df.with_columns(
         [
             pl.col("sold_date").dt.year().alias("year"),
             pl.col("sold_date").dt.month().alias("month"),
             pl.col("sold_date").dt.strftime("%Y-%m").alias("sold_month"),
             (pl.col("ipoteka_raw") == "Ипотека").fill_null(False).alias("is_mortgage"),
-            pl.lit("Крым").alias("agglomeration"),
+            agg,
             pl.when(pl.col("area_pd").is_not_null() & (pl.col("area_pd") > 0))
             .then(pl.col("area_pd"))
             .otherwise(pl.col("area_egrn"))
             .alias("area_sqm"),
+            pl.col("ipoteka_raw").cast(pl.Utf8).alias("ipoteka"),
             pl.when(pl.col("rooms_count").is_null())
             .then(
                 pl.when(pl.col("type_lot").str.to_lowercase().fill_null("").str.contains("студ"))
@@ -215,8 +255,33 @@ def load_crimea_deals(path: Optional[str] = None) -> pl.DataFrame:
         ]
     )
 
+    df = df.with_columns(
+        [
+            pl.when(pl.col("price_sqm").is_not_null() & (pl.col("price_sqm") > 0))
+            .then(pl.col("price_sqm"))
+            .when(
+                pl.col("est_budget").is_not_null()
+                & (pl.col("est_budget") > 0)
+                & pl.col("area_sqm").is_not_null()
+                & (pl.col("area_sqm") > 0)
+            )
+            .then(pl.col("est_budget") / pl.col("area_sqm"))
+            .otherwise(None)
+            .alias("price_sqm"),
+        ]
+    )
+
     df = df.drop(["date_sold_raw", "ipoteka_raw", "area_pd", "area_egrn"], strict=False)
     return df
+
+
+def load_crimea_deals(path: Optional[str] = None) -> pl.DataFrame:
+    """
+    Loads bnMAP Crimea deals export (CSV) and normalizes to the same schema as `load_deals()`.
+    Expected columns (RU): Проект, Город, Район, Девелопер, Тип объекта, Дата договора, Тип ипотеки, Расчетный бюджет объекта
+    """
+    p = path or resolve_crimea_path()
+    return load_bnmap_deals(p, force_crimea_agglomeration=True)
 
 
 def list_sorted(values: Iterable[str]) -> list[str]:
