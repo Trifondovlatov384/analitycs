@@ -3,66 +3,35 @@ from __future__ import annotations
 from dash import dcc, html
 import dash_bootstrap_components as dbc
 
-
-def kpi_card(title: str, value_id: str) -> dbc.Card:
-    return dbc.Card(
-        dbc.CardBody(
-            [
-                html.Div(title, className="text-muted small"),
-                html.Div(id=value_id, className="h4 mb-0"),
-            ]
-        ),
-        className="shadow-sm",
-    )
+from ui_components import (
+    ALL_TAB_IDS,
+    app_shell,
+    chart_card,
+    kpi_card,
+    period_filter_block,
+    source_filter_block,
+)
 
 
-def layout() -> dbc.Container:
+def layout(*, matrix_available: bool = False) -> html.Div:
+    heatmap_source_options = [{"label": "Сделки (CSV)", "value": "deals"}]
+    if matrix_available:
+        heatmap_source_options.append({"label": "Крым (матрица)", "value": "matrix_crimea"})
+
     deals_tab = dbc.Container(
         [
             dbc.Row(
                 [
                     dbc.Col(
-                        [
-                            html.H2("Сделки недвижимости"),
-                            html.Div(
-                                "Фильтры слева, графики по месяцам и рейтинги по комплексам справа.",
-                                className="text-muted",
-                            ),
-                        ],
-                        md=9,
-                    ),
-                    dbc.Col(
-                        [
-                            dbc.Badge("Local", color="secondary", className="mt-2"),
-                            dbc.Button(
-                                "Открыть страницу ЕГРЗ",
-                                id="open_egrz_tab_button",
-                                color="primary",
-                                size="sm",
-                                className="mt-2",
-                            ),
-                        ],
-                        md=3,
-                        className="text-end",
-                    ),
-                ],
-                className="mt-4 align-items-center",
-            ),
-            dbc.Row(
-                [
-                    dbc.Col(
                         dbc.Alert(
-                            [
-                                html.Div(
-                                    "Подсказка: для фильтра по региону используйте «Агломерация» (Анапа, Сочи, Крым и т.д.).",
-                                ),
-                            ],
+                            "Подсказка: задайте период датами или выберите год. Агломерация — Анапа, Сочи, Крым.",
                             color="light",
-                            className="mt-3 mb-0",
+                            className="mb-0 border-0",
                         ),
                         md=12,
                     )
-                ]
+                ],
+                className="mt-3",
             ),
             dbc.Row(
                 [
@@ -71,18 +40,8 @@ def layout() -> dbc.Container:
                             dbc.CardBody(
                                 [
                                     html.Div("Фильтры", className="h5 mb-3"),
-                                    dbc.Label("Источник данных"),
-                                    dcc.Dropdown(
-                                        id="source",
-                                        options=[
-                                            {"label": "Все", "value": "all"},
-                                            {"label": "Основной файл", "value": "main"},
-                                            {"label": "Крым", "value": "crimea"},
-                                        ],
-                                        value="all",
-                                        clearable=False,
-                                    ),
-                                    dbc.Label("Агломерация"),
+                                    source_filter_block("source"),
+                                    dbc.Label("Агломерация", className="mt-2"),
                                     dcc.Dropdown(
                                         id="agglomeration",
                                         options=[
@@ -95,29 +54,19 @@ def layout() -> dbc.Container:
                                         value="all",
                                         clearable=False,
                                     ),
-                                    dbc.Label("Город", className="mt-3"),
+                                    *period_filter_block(
+                                        date_from_id="date_from",
+                                        date_to_id="date_to",
+                                        year_id="year",
+                                        months_id="months",
+                                    ),
+                                    dbc.Label("Город", className="mt-2"),
                                     dcc.Dropdown(
                                         id="city",
                                         options=[],
                                         value=[],
                                         multi=True,
                                         placeholder="Выберите город(а)…",
-                                    ),
-                                    dbc.Label("Год", className="mt-3"),
-                                    dcc.Dropdown(
-                                        id="year",
-                                        options=[],
-                                        value=None,
-                                        clearable=False,
-                                        placeholder="Выберите год…",
-                                    ),
-                                    dbc.Label("Месяцы (опционально)", className="mt-3"),
-                                    dcc.Dropdown(
-                                        id="months",
-                                        options=[],
-                                        value=[],
-                                        multi=True,
-                                        placeholder="Если пусто — весь год",
                                     ),
                                     dbc.Label("Ипотека", className="mt-3"),
                                     dcc.RadioItems(
@@ -148,58 +97,30 @@ def layout() -> dbc.Container:
                                     ),
                                 ]
                             ),
-                            className="shadow-sm",
+                            className="card-modern dashboard-filters-card",
                         ),
                         md=4,
-                        className="mt-3",
+                        className="mt-3 dashboard-filters-col",
                     ),
                     dbc.Col(
                         [
-                            dbc.Row(
-                                [
-                                    dbc.Col(kpi_card("Сделок", "kpi_total_deals"), md=4),
-                                    dbc.Col(kpi_card("Объём, ₽", "kpi_sum_budget"), md=4),
-                                    dbc.Col(kpi_card("Средняя цена лота, ₽", "kpi_avg_budget"), md=4),
-                                ],
-                                className="mt-3 g-3",
+                            html.Div(
+                                dbc.Row(
+                                    [
+                                        dbc.Col(kpi_card("Сделок", "kpi_total_deals"), md=4),
+                                        dbc.Col(kpi_card("Объём, ₽", "kpi_sum_budget"), md=4),
+                                        dbc.Col(kpi_card("Средняя цена лота, ₽", "kpi_avg_budget"), md=4),
+                                    ],
+                                    className="g-3 h-100",
+                                ),
+                                className="dashboard-kpi-stack",
                             ),
-                            dbc.Row(
-                                [
-                                    dbc.Col(
-                                        dbc.Card(
-                                            dbc.CardBody(
-                                                [
-                                                    html.Div(
-                                                        "Сделки по месяцам (всего / ипотека / не ипотека)",
-                                                        className="h6",
-                                                    ),
-                                                    dcc.Graph(id="fig_monthly_counts", config={"displayModeBar": False}),
-                                                ]
-                                            ),
-                                            className="shadow-sm",
-                                        ),
-                                        md=12,
-                                        className="mt-3",
-                                    )
-                                ]
+                            chart_card(
+                                "Сделки по месяцам (всего / ипотека / не ипотека)",
+                                "fig_monthly_counts",
+                                line_toggle=True,
                             ),
-                            dbc.Row(
-                                [
-                                    dbc.Col(
-                                        dbc.Card(
-                                            dbc.CardBody(
-                                                [
-                                                    html.Div("Средняя стоимость лота по месяцам", className="h6"),
-                                                    dcc.Graph(id="fig_monthly_avg", config={"displayModeBar": False}),
-                                                ]
-                                            ),
-                                            className="shadow-sm",
-                                        ),
-                                        md=12,
-                                        className="mt-3",
-                                    )
-                                ]
-                            ),
+                            chart_card("Средняя стоимость лота по месяцам", "fig_monthly_avg"),
                             dbc.Row(
                                 [
                                     dbc.Col(
@@ -236,9 +157,10 @@ def layout() -> dbc.Container:
                             ),
                         ],
                         md=8,
+                        className="mt-3 dashboard-kpi-col",
                     ),
                 ],
-                className="g-3",
+                className="g-3 dashboard-top-row",
             ),
         ],
         fluid=True,
@@ -269,17 +191,7 @@ def layout() -> dbc.Container:
                             dbc.CardBody(
                                 [
                                     html.Div("Фильтры (Комплексы)", className="h5 mb-3"),
-                                    dbc.Label("Источник данных"),
-                                    dcc.Dropdown(
-                                        id="c_source",
-                                        options=[
-                                            {"label": "Все", "value": "all"},
-                                            {"label": "Основной файл", "value": "main"},
-                                            {"label": "Крым", "value": "crimea"},
-                                        ],
-                                        value="all",
-                                        clearable=False,
-                                    ),
+                                    source_filter_block("c_source"),
                                     dbc.Label("Агломерация"),
                                     dcc.Dropdown(
                                         id="c_agglomeration",
@@ -293,10 +205,12 @@ def layout() -> dbc.Container:
                                         value="all",
                                         clearable=False,
                                     ),
-                                    dbc.Label("Год", className="mt-3"),
-                                    dcc.Dropdown(id="c_year", options=[], value=None, clearable=False),
-                                    dbc.Label("Месяцы (опционально)", className="mt-3"),
-                                    dcc.Dropdown(id="c_months", options=[], value=[], multi=True),
+                                    *period_filter_block(
+                                        date_from_id="c_date_from",
+                                        date_to_id="c_date_to",
+                                        year_id="c_year",
+                                        months_id="c_months",
+                                    ),
                                     dbc.Label("Город", className="mt-3"),
                                     dcc.Dropdown(id="c_city", options=[], value=[], multi=True),
                                     dbc.Label("Ипотека", className="mt-3"),
@@ -404,17 +318,7 @@ def layout() -> dbc.Container:
                             dbc.CardBody(
                                 [
                                     html.Div("Фильтры (Сравнение)", className="h5 mb-3"),
-                                    dbc.Label("Источник данных"),
-                                    dcc.Dropdown(
-                                        id="cmp_source",
-                                        options=[
-                                            {"label": "Все", "value": "all"},
-                                            {"label": "Основной файл", "value": "main"},
-                                            {"label": "Крым", "value": "crimea"},
-                                        ],
-                                        value="all",
-                                        clearable=False,
-                                    ),
+                                    source_filter_block("cmp_source"),
                                     dbc.Label("Агломерация"),
                                     dcc.Dropdown(
                                         id="cmp_agglomeration",
@@ -428,10 +332,12 @@ def layout() -> dbc.Container:
                                         value="all",
                                         clearable=False,
                                     ),
-                                    dbc.Label("Год", className="mt-3"),
-                                    dcc.Dropdown(id="cmp_year", options=[], value=None, clearable=False),
-                                    dbc.Label("Месяцы (опционально)", className="mt-3"),
-                                    dcc.Dropdown(id="cmp_months", options=[], value=[], multi=True),
+                                    *period_filter_block(
+                                        date_from_id="cmp_date_from",
+                                        date_to_id="cmp_date_to",
+                                        year_id="cmp_year",
+                                        months_id="cmp_months",
+                                    ),
                                     dbc.Label("Город", className="mt-3"),
                                     dcc.Dropdown(id="cmp_city", options=[], value=[], multi=True),
                                     dbc.Label("Ипотека", className="mt-3"),
@@ -549,23 +455,13 @@ def layout() -> dbc.Container:
                                     dbc.Label("Источник"),
                                     dcc.Dropdown(
                                         id="h_source",
-                                        options=[
-                                            {"label": "Основные сделки (CSV сделок)", "value": "deals"},
-                                            {"label": "Крым (матрица, как в примере)", "value": "matrix_crimea"},
-                                        ],
+                                        options=heatmap_source_options,
                                         value="deals",
                                         clearable=False,
                                     ),
-                                    dbc.Label("Источник сделок (для режима 'Основные сделки')", className="mt-3"),
-                                    dcc.Dropdown(
-                                        id="h_deals_source",
-                                        options=[
-                                            {"label": "Все", "value": "all"},
-                                            {"label": "Основной файл", "value": "main"},
-                                            {"label": "Крым", "value": "crimea"},
-                                        ],
-                                        value="all",
-                                        clearable=False,
+                                    html.Div(
+                                        source_filter_block("h_deals_source"),
+                                        className="mt-3",
                                     ),
                                     dbc.Label("Агломерация", className="mt-3"),
                                     dcc.Dropdown(
@@ -580,9 +476,13 @@ def layout() -> dbc.Container:
                                         value="all",
                                         clearable=False,
                                     ),
-                                    dbc.Label("Год", className="mt-3"),
-                                    dcc.Dropdown(id="h_year", options=[], value=None, clearable=False),
-                                    dbc.Label("Город (основной CSV)", className="mt-3"),
+                                    *period_filter_block(
+                                        date_from_id="h_date_from",
+                                        date_to_id="h_date_to",
+                                        year_id="h_year",
+                                        months_id="h_months",
+                                    ),
+                                    dbc.Label("Город", className="mt-2"),
                                     dcc.Dropdown(
                                         id="h_city",
                                         options=[],
@@ -756,19 +656,13 @@ def layout() -> dbc.Container:
                             dbc.CardBody(
                                 [
                                     html.Div("Фильтры (Эйлер)", className="h5 mb-3"),
-                                    dbc.Label("Источник данных"),
-                                    dcc.Dropdown(
-                                        id="e_source",
-                                        options=[
-                                            {"label": "Все", "value": "all"},
-                                            {"label": "Основной файл", "value": "main"},
-                                            {"label": "Крым", "value": "crimea"},
-                                        ],
-                                        value="all",
-                                        clearable=False,
+                                    source_filter_block("e_source"),
+                                    *period_filter_block(
+                                        date_from_id="e_date_from",
+                                        date_to_id="e_date_to",
+                                        year_id="e_year",
+                                        months_id="e_months",
                                     ),
-                                    dbc.Label("Год", className="mt-3"),
-                                    dcc.Dropdown(id="e_year", options=[], value=None, clearable=False),
                                     dbc.Label("Города (опционально)", className="mt-3"),
                                     dcc.Dropdown(id="e_city", options=[], value=[], multi=True),
                                     dbc.Label("Проекты (ЖК), до 3", className="mt-3"),
@@ -1208,17 +1102,7 @@ def layout() -> dbc.Container:
                             dbc.CardBody(
                                 [
                                     html.Div("Фильтры (рост проектов)", className="h5 mb-3"),
-                                    dbc.Label("Источник сделок"),
-                                    dcc.Dropdown(
-                                        id="pg_deals_source",
-                                        options=[
-                                            {"label": "Все", "value": "all"},
-                                            {"label": "Основной файл", "value": "main"},
-                                            {"label": "Крым", "value": "crimea"},
-                                        ],
-                                        value="all",
-                                        clearable=False,
-                                    ),
+                                    source_filter_block("pg_deals_source"),
                                     dbc.Label("Агломерация", className="mt-3"),
                                     dcc.Dropdown(
                                         id="pg_agglomeration",
@@ -1232,9 +1116,13 @@ def layout() -> dbc.Container:
                                         value="all",
                                         clearable=False,
                                     ),
-                                    dbc.Label("Год", className="mt-3"),
-                                    dcc.Dropdown(id="pg_year", options=[], value=None, clearable=False),
-                                    dbc.Label("Город", className="mt-3"),
+                                    *period_filter_block(
+                                        date_from_id="pg_date_from",
+                                        date_to_id="pg_date_to",
+                                        year_id="pg_year",
+                                        months_id="pg_months",
+                                    ),
+                                    dbc.Label("Город", className="mt-2"),
                                     dcc.Dropdown(id="pg_city", options=[], value=[], multi=True),
                                     dbc.Label("Район", className="mt-3"),
                                     dcc.Dropdown(id="pg_district", options=[], value=[], multi=True),
@@ -1348,24 +1236,25 @@ def layout() -> dbc.Container:
         className="pb-5",
     )
 
-    return dbc.Container(
-        [
-            dcc.Tabs(
-                id="tabs",
-                value="tab_deals",
-                children=[
-                    dcc.Tab(label="Дашборд", value="tab_deals", children=deals_tab),
-                    dcc.Tab(label="Комплексы", value="tab_complexes", children=complexes_tab),
-                    dcc.Tab(label="Сравнение", value="tab_compare", children=compare_tab),
-                    dcc.Tab(label="Эйлер", value="tab_euler", children=euler_tab),
-                    dcc.Tab(label="Теплокарта", value="tab_heatmap", children=heatmap_tab),
-                    dcc.Tab(label="ЕГРЗ Парсер", value="tab_egrz", children=egrz_tab),
-                    dcc.Tab(label="Рост лота", value="tab_lot_growth", children=lot_growth_tab),
-                    dcc.Tab(label="Рост проектов", value="tab_project_growth", children=project_growth_tab),
-                ],
-            )
-        ],
-        fluid=True,
-        className="pb-3",
-    )
+    tab_panels = {
+        "tab_deals": deals_tab,
+        "tab_complexes": complexes_tab,
+        "tab_compare": compare_tab,
+        "tab_euler": euler_tab,
+        "tab_heatmap": heatmap_tab,
+        "tab_egrz": egrz_tab,
+        "tab_lot_growth": lot_growth_tab,
+        "tab_project_growth": project_growth_tab,
+    }
+    panels = [
+        html.Div(
+            tab_panels[tab_id],
+            id={"type": "tab-panel", "id": tab_id},
+            className="tab-panel",
+            style={"display": "block" if tab_id == "tab_deals" else "none"},
+        )
+        for tab_id in ALL_TAB_IDS
+    ]
+
+    return app_shell(panels, matrix_available=matrix_available)
 

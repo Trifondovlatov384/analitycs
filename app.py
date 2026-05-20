@@ -9,10 +9,11 @@ import re
 import subprocess
 import sys
 import traceback
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import parse_qs
 
-from dash import Dash, Input, Output, State, callback_context, dcc, html
+from dash import ALL, Dash, Input, Output, State, callback_context, dcc, html
 from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 from dash import dash_table
@@ -45,6 +46,33 @@ from project_growth_logic import (
     project_growth_dimension_options,
 )
 from ui import layout
+from ui_components import ALL_TAB_IDS, HIDDEN_TABS
+
+ADMIN_ACCESS_KEY = os.environ.get("ADMIN_ACCESS_KEY", "dev-admin-key")
+HIDDEN_TAB_IDS_SET = {tab_id for tab_id, _ in HIDDEN_TABS}
+SOURCE_LABELS = {"main": "Основной файл", "crimea": "Крым"}
+SOURCE_DROPDOWN_IDS = [
+    "source",
+    "c_source",
+    "cmp_source",
+    "e_source",
+    "h_deals_source",
+    "pg_deals_source",
+]
+DATE_FILTER_IDS = [
+    "date_from",
+    "date_to",
+    "c_date_from",
+    "c_date_to",
+    "cmp_date_from",
+    "cmp_date_to",
+    "e_date_from",
+    "e_date_to",
+    "h_date_from",
+    "h_date_to",
+    "pg_date_from",
+    "pg_date_to",
+]
 
 
 # ---- Helpers (declared before callbacks) ----
@@ -97,6 +125,77 @@ def _dash_year(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _parse_dash_date(value: object) -> date | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, date):
+        return value
+    try:
+        return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _period_years(year: object, date_from: object, date_to: object) -> list[int] | None:
+    if _parse_dash_date(date_from) is not None or _parse_dash_date(date_to) is not None:
+        return None
+    y = _dash_year(year)
+    return [y] if y is not None else None
+
+
+def _slice_by_period(dff: pl.DataFrame, year: object, date_from: object, date_to: object) -> pl.DataFrame:
+    d0 = _parse_dash_date(date_from)
+    d1 = _parse_dash_date(date_to)
+    if d0 is not None:
+        dff = dff.filter(pl_col("sold_date") >= d0)
+    if d1 is not None:
+        dff = dff.filter(pl_col("sold_date") <= d1)
+    elif d0 is None and d1 is None:
+        y = _dash_year(year)
+        if y is not None:
+            dff = dff.filter(pl_col("year") == y)
+    return dff
+
+
+def build_meta_sources(df: pl.DataFrame) -> dict:
+    sources = sorted({str(s) for s in df.select("source").drop_nulls().to_series().to_list() if str(s).strip()})
+    if not sources:
+        return {"options": [], "default": None, "show": False}
+    if len(sources) == 1:
+        s = sources[0]
+        return {
+            "options": [{"label": SOURCE_LABELS.get(s, s), "value": s}],
+            "default": s,
+            "show": False,
+        }
+    opts = [{"label": "Все", "value": "all"}]
+    opts.extend({"label": SOURCE_LABELS.get(s, s), "value": s} for s in sources)
+    return {"options": opts, "default": "all", "show": True}
+
+
+def build_meta_date_bounds(df: pl.DataFrame) -> dict[str, str | None]:
+    if df.is_empty() or "sold_date" not in df.columns:
+        return {"min": None, "max": None}
+    bounds = df.select(
+        pl.col("sold_date").min().alias("min_d"),
+        pl.col("sold_date").max().alias("max_d"),
+    ).row(0, named=True)
+    min_d, max_d = bounds.get("min_d"), bounds.get("max_d")
+    return {
+        "min": min_d.isoformat() if min_d is not None else None,
+        "max": max_d.isoformat() if max_d is not None else None,
+    }
+
+
+def _matrix_csv_available() -> bool:
+    candidates = [
+        os.environ.get("CRIMEA_MATRIX_PATH", ""),
+        str(Path.cwd() / "Аналитика сделок по Крыму - По кол-ву.csv"),
+        "/Users/nikitavisicki/Downloads/Аналитика сделок по Крыму - По кол-ву.csv",
+    ]
+    return any(p and Path(p).exists() for p in candidates)
 
 
 def _normalize_ru(value: object) -> str:
@@ -205,13 +304,23 @@ def _filter_heatmap_deals(
     type_lot_sel: object,
     mortgage_mode: str,
     data_quality_flags: object = None,
+    date_from: object = None,
+    date_to: object = None,
+    months_sel: object = None,
 ) -> pl.DataFrame:
     flags = set(_normalize_multi_str(data_quality_flags))
     if deals_source and deals_source != "all":
         dff = dff.filter(pl_col("source") == deals_source)
-    y = _dash_year(year)
-    if y is not None:
-        dff = dff.filter(pl_col("year") == y)
+    d0 = _parse_dash_date(date_from)
+    d1 = _parse_dash_date(date_to)
+    if d0 is not None:
+        dff = dff.filter(pl_col("sold_date") >= d0)
+    if d1 is not None:
+        dff = dff.filter(pl_col("sold_date") <= d1)
+    if d0 is None and d1 is None:
+        y = _dash_year(year)
+        if y is not None:
+            dff = dff.filter(pl_col("year") == y)
     if agglomeration and agglomeration != "all":
         dff = dff.filter(pl_col("agglomeration") == agglomeration)
 
@@ -222,13 +331,15 @@ def _filter_heatmap_deals(
     filtered = apply_filters(
         dff,
         years=None,
-        months=None,
+        months=_normalize_multi_str(months_sel) or None,
         agglomeration=None,
         cities=_normalize_multi_str(cities_sel) or None,
         mortgage_mode=mortgage_mode,
         sources=None,
         developers=None,
         type_lots=_normalize_multi_str(type_lot_sel) or None,
+        date_from=d0,
+        date_to=d1,
     )
     if "exclude_wholesale" in flags and "Участие объекта в оптовой сделке" in filtered.columns:
         filtered = filtered.filter(
@@ -243,7 +354,7 @@ def _filter_heatmap_deals(
     return filtered
 
 
-def make_monthly_counts_figure(df: pl.DataFrame) -> go.Figure:
+def make_monthly_counts_figure(df: pl.DataFrame, *, line_shape: str = "linear") -> go.Figure:
     m = monthly_deal_counts(df)
     if m.is_empty():
         fig = go.Figure()
@@ -253,12 +364,14 @@ def make_monthly_counts_figure(df: pl.DataFrame) -> go.Figure:
     x = m["sold_month"].to_list()
 
     fig = go.Figure()
+    line = dict(shape=line_shape)
     fig.add_trace(
         go.Scatter(
             x=x,
             y=m["deals_total"].to_list(),
             mode="lines+markers",
             name="Всего",
+            line=line,
             hovertemplate="Месяц=%{x}<br>Сделок=%{y}<extra></extra>",
         )
     )
@@ -268,6 +381,7 @@ def make_monthly_counts_figure(df: pl.DataFrame) -> go.Figure:
             y=m["deals_mortgage"].to_list(),
             mode="lines+markers",
             name="Ипотека",
+            line=line,
             hovertemplate="Месяц=%{x}<br>Сделок (ипотека)=%{y}<extra></extra>",
         )
     )
@@ -277,6 +391,7 @@ def make_monthly_counts_figure(df: pl.DataFrame) -> go.Figure:
             y=m["deals_non_mortgage"].to_list(),
             mode="lines+markers",
             name="Не ипотека",
+            line=line,
             hovertemplate="Месяц=%{x}<br>Сделок (не ипотека)=%{y}<extra></extra>",
         )
     )
@@ -291,7 +406,7 @@ def make_monthly_counts_figure(df: pl.DataFrame) -> go.Figure:
     return fig
 
 
-def make_monthly_avg_figure(df: pl.DataFrame) -> go.Figure:
+def make_monthly_avg_figure(df: pl.DataFrame, *, line_shape: str = "linear") -> go.Figure:
     m = monthly_avg_price(df)
     fig = go.Figure()
     if m.is_empty():
@@ -304,6 +419,7 @@ def make_monthly_avg_figure(df: pl.DataFrame) -> go.Figure:
             y=m["avg_est_budget"].to_list(),
             mode="lines+markers",
             name="Средняя цена",
+            line=dict(shape=line_shape),
             customdata=m.select(["deals_with_price", "sum_est_budget"]).to_numpy(),
             hovertemplate=(
                 "Месяц=%{x}"
@@ -728,23 +844,104 @@ def create_app() -> Dash:
 
     app = Dash(
         __name__,
-        external_stylesheets=[dbc.themes.FLATLY],
-        title="Сделки недвижимости — дашборд",
+        external_stylesheets=[
+            dbc.themes.BOOTSTRAP,
+            "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap",
+        ],
+        title="Аналитика сделок",
         suppress_callback_exceptions=True,
     )
 
     years = sorted([int(y) for y in df.select("year").unique().drop_nulls().to_series().to_list()])
     default_year = years[-1] if years else None
+    matrix_available = _matrix_csv_available()
 
-    # IMPORTANT: do NOT send full dataset to the browser (it is huge).
-    # Keep data server-side and only send small UI state.
     app.layout = html.Div(
         [
             dcc.Store(id="meta_years", data=years),
             dcc.Store(id="meta_default_year", data=default_year),
-            layout(),
+            dcc.Store(id="meta_sources", data=build_meta_sources(df)),
+            dcc.Store(id="meta_date_bounds", data=build_meta_date_bounds(df)),
+            layout(matrix_available=matrix_available),
         ]
     )
+
+    @app.callback(
+        [Output(f"wrap-{sid}", "style") for sid in SOURCE_DROPDOWN_IDS],
+        *[Output(sid, "options") for sid in SOURCE_DROPDOWN_IDS],
+        *[Output(sid, "value") for sid in SOURCE_DROPDOWN_IDS],
+        Input("meta_sources", "data"),
+    )
+    def _init_source_dropdowns(meta: dict | None):
+        meta = meta or {}
+        options = meta.get("options") or []
+        default = meta.get("default")
+        show = meta.get("show", True)
+        style = {} if show else {"display": "none"}
+        n = len(SOURCE_DROPDOWN_IDS)
+        return [style] * n + [options] * n + [default] * n
+
+    @app.callback(
+        [Output(did, "min_date_allowed") for did in DATE_FILTER_IDS]
+        + [Output(did, "max_date_allowed") for did in DATE_FILTER_IDS],
+        Input("meta_date_bounds", "data"),
+    )
+    def _init_date_pickers(bounds: dict | None):
+        bounds = bounds or {}
+        min_d = bounds.get("min")
+        max_d = bounds.get("max")
+        n = len(DATE_FILTER_IDS)
+        return [min_d] * n + [max_d] * n
+
+    @app.callback(
+        [Output({"type": "tab-panel", "id": tab_id}, "style") for tab_id in ALL_TAB_IDS],
+        Input("tabs", "data"),
+    )
+    def _show_tab_panel(active: str | None):
+        active = active or "tab_deals"
+        return [
+            {"display": "block"} if tab_id == active else {"display": "none"}
+            for tab_id in ALL_TAB_IDS
+        ]
+
+    @app.callback(
+        Output("tabs", "data"),
+        Input({"type": "nav-tab", "id": ALL}, "n_clicks"),
+        Input("url", "search"),
+        State("tabs", "data"),
+    )
+    def _switch_tab(_nav_clicks, search: str | None, current: str | None):
+        if not callback_context.triggered:
+            return current or "tab_deals"
+        triggered = callback_context.triggered_id
+        if triggered == "url":
+            if not search:
+                raise PreventUpdate
+            params = parse_qs(search.lstrip("?"))
+            tab = (params.get("tab") or [None])[0]
+            access = (params.get("access") or [None])[0]
+            if tab in HIDDEN_TAB_IDS_SET:
+                if access == ADMIN_ACCESS_KEY:
+                    return tab
+                return "tab_deals"
+            if tab in ALL_TAB_IDS:
+                return tab
+            raise PreventUpdate
+        if isinstance(triggered, dict) and triggered.get("type") == "nav-tab":
+            return triggered["id"]
+        raise PreventUpdate
+
+    @app.callback(
+        Output("chart_line_shape", "data"),
+        Input("dash_line_style_linear", "n_clicks"),
+        Input("dash_line_style_spline", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def _set_line_shape(_linear: int | None, _spline: int | None):
+        tid = callback_context.triggered_id
+        if tid == "dash_line_style_spline":
+            return "spline"
+        return "linear"
 
     @app.callback(
         Output("year", "options"),
@@ -818,6 +1015,8 @@ def create_app() -> Dash:
         Input("source", "value"),
         Input("agglomeration", "value"),
         Input("year", "value"),
+        Input("date_from", "date"),
+        Input("date_to", "date"),
         State("city", "value"),
         State("developer", "value"),
         State("type_lot", "value"),
@@ -827,6 +1026,8 @@ def create_app() -> Dash:
         source: str,
         agglomeration: str,
         year: int | None,
+        date_from: str | None,
+        date_to: str | None,
         city_selected: list[str],
         developer_selected: list[str],
         type_lot_selected: list[str],
@@ -835,7 +1036,13 @@ def create_app() -> Dash:
         dff = df
         if source and source != "all":
             dff = dff.filter(pl_col("source") == source)
-        if year is not None:
+        d0 = _parse_dash_date(date_from)
+        d1 = _parse_dash_date(date_to)
+        if d0 is not None:
+            dff = dff.filter(pl_col("sold_date") >= d0)
+        if d1 is not None:
+            dff = dff.filter(pl_col("sold_date") <= d1)
+        elif d0 is None and d1 is None and year is not None:
             dff = dff.filter(pl_col("year") == year)
         if agglomeration and agglomeration != "all":
             dff = dff.filter(pl_col("agglomeration") == agglomeration)
@@ -876,34 +1083,41 @@ def create_app() -> Dash:
         Output("fig_top_complexes_mortgage", "figure"),
         Input("year", "value"),
         Input("months", "value"),
+        Input("date_from", "date"),
+        Input("date_to", "date"),
         Input("source", "value"),
         Input("agglomeration", "value"),
         Input("city", "value"),
         Input("mortgage_mode", "value"),
         Input("developer", "value"),
         Input("type_lot", "value"),
+        Input("chart_line_shape", "data"),
     )
     def _update_dashboard(
         year: int | None,
         months: list[str],
+        date_from: str | None,
+        date_to: str | None,
         source: str,
         agglomeration: str,
         cities: list[str],
         mortgage_mode: str,
         developers: list[str],
         type_lots: list[str],
+        line_shape: str | None,
     ):
         dff = df
 
-        years = [int(year)] if year is not None else None
+        years = _period_years(year, date_from, date_to)
         months_sel = months or None
         cities_sel = cities or None
         dev_sel = developers or None
         lot_sel = type_lots or None
         sources = None if (not source or source == "all") else [source]
+        d0 = _parse_dash_date(date_from)
+        d1 = _parse_dash_date(date_to)
+        shape = line_shape if line_shape in ("linear", "spline") else "linear"
 
-        # Base filter for the dataset (without mortgage filter),
-        # so breakdown charts remain informative even when mortgage_mode is set.
         base_filtered = apply_filters(
             dff,
             years=years,
@@ -914,6 +1128,8 @@ def create_app() -> Dash:
             sources=sources,
             developers=dev_sel,
             type_lots=lot_sel,
+            date_from=d0,
+            date_to=d1,
         )
 
         filtered_for_kpi = apply_filters(
@@ -930,14 +1146,15 @@ def create_app() -> Dash:
 
         k = kpis(filtered_for_kpi)
 
-        fig_counts = make_monthly_counts_figure(base_filtered)
-        fig_avg = make_monthly_avg_figure(filtered_for_kpi)
+        fig_counts = make_monthly_counts_figure(base_filtered, line_shape=shape)
+        fig_avg = make_monthly_avg_figure(filtered_for_kpi, line_shape=shape)
 
         fig_top_total = go.Figure()
         fig_top_mortgage = go.Figure()
-        if year is not None:
-            top_total = yearly_top_complexes(base_filtered, year=int(year), only_mortgage=False).head(25)
-            top_mort = yearly_top_complexes(base_filtered, year=int(year), only_mortgage=True).head(25)
+        top_year = _dash_year(year) if d0 is None and d1 is None else None
+        if top_year is not None:
+            top_total = yearly_top_complexes(base_filtered, year=int(top_year), only_mortgage=False).head(25)
+            top_mort = yearly_top_complexes(base_filtered, year=int(top_year), only_mortgage=True).head(25)
             fig_top_total = make_top_complexes_figure(top_total)
             fig_top_mortgage = make_top_complexes_figure(top_mort)
 
@@ -963,6 +1180,8 @@ def create_app() -> Dash:
         Input("c_source", "value"),
         Input("c_agglomeration", "value"),
         Input("c_year", "value"),
+        Input("c_date_from", "date"),
+        Input("c_date_to", "date"),
         State("c_city", "value"),
         State("c_type_lot", "value"),
         State("c_months", "value"),
@@ -972,6 +1191,8 @@ def create_app() -> Dash:
         source: str,
         agglomeration: str,
         year: int | None,
+        date_from: str | None,
+        date_to: str | None,
         city_selected: list[str],
         type_lot_selected: list[str],
         months_selected: list[str],
@@ -980,8 +1201,7 @@ def create_app() -> Dash:
         dff = df
         if source and source != "all":
             dff = dff.filter(pl_col("source") == source)
-        if year is not None:
-            dff = dff.filter(pl_col("year") == year)
+        dff = _slice_by_period(dff, year, date_from, date_to)
         if agglomeration and agglomeration != "all":
             dff = dff.filter(pl_col("agglomeration") == agglomeration)
 
@@ -1016,6 +1236,8 @@ def create_app() -> Dash:
         Output("c_fig_complex_monthly", "figure"),
         Input("c_year", "value"),
         Input("c_months", "value"),
+        Input("c_date_from", "date"),
+        Input("c_date_to", "date"),
         Input("c_source", "value"),
         Input("c_agglomeration", "value"),
         Input("c_city", "value"),
@@ -1026,6 +1248,8 @@ def create_app() -> Dash:
     def _update_complexes_tab(
         year: int | None,
         months: list[str],
+        date_from: str | None,
+        date_to: str | None,
         source: str,
         agglomeration: str,
         cities: list[str],
@@ -1033,15 +1257,14 @@ def create_app() -> Dash:
         type_lots: list[str],
         complex_name: str | None,
     ):
-        dff = df
-        years = [int(year)] if year is not None else None
+        years = _period_years(year, date_from, date_to)
         months_sel = months or None
         cities_sel = cities or None
         sources = None if (not source or source == "all") else [source]
         type_lots_sel = type_lots or None
 
         base = apply_filters(
-            dff,
+            df,
             years=years,
             months=months_sel,
             agglomeration=agglomeration,
@@ -1050,6 +1273,8 @@ def create_app() -> Dash:
             sources=sources,
             developers=None,
             type_lots=type_lots_sel,
+            date_from=_parse_dash_date(date_from),
+            date_to=_parse_dash_date(date_to),
         )
 
         city_counts = city_deal_counts(base)
@@ -1073,6 +1298,8 @@ def create_app() -> Dash:
         Input("cmp_source", "value"),
         Input("cmp_agglomeration", "value"),
         Input("cmp_year", "value"),
+        Input("cmp_date_from", "date"),
+        Input("cmp_date_to", "date"),
         State("cmp_city", "value"),
         State("cmp_type_lot", "value"),
         State("cmp_months", "value"),
@@ -1081,6 +1308,8 @@ def create_app() -> Dash:
         source: str,
         agglomeration: str,
         year: int | None,
+        date_from: str | None,
+        date_to: str | None,
         city_selected: list[str],
         type_lot_selected: list[str],
         months_selected: list[str],
@@ -1088,8 +1317,7 @@ def create_app() -> Dash:
         dff = df
         if source and source != "all":
             dff = dff.filter(pl_col("source") == source)
-        if year is not None:
-            dff = dff.filter(pl_col("year") == year)
+        dff = _slice_by_period(dff, year, date_from, date_to)
         if agglomeration and agglomeration != "all":
             dff = dff.filter(pl_col("agglomeration") == agglomeration)
 
@@ -1118,6 +1346,8 @@ def create_app() -> Dash:
         Output("cmp_tbl_complex_compare", "children"),
         Input("cmp_year", "value"),
         Input("cmp_months", "value"),
+        Input("cmp_date_from", "date"),
+        Input("cmp_date_to", "date"),
         Input("cmp_source", "value"),
         Input("cmp_agglomeration", "value"),
         Input("cmp_city", "value"),
@@ -1128,6 +1358,8 @@ def create_app() -> Dash:
     def _update_compare_tab(
         year: int | None,
         months: list[str],
+        date_from: str | None,
+        date_to: str | None,
         source: str,
         agglomeration: str,
         cities: list[str],
@@ -1135,7 +1367,7 @@ def create_app() -> Dash:
         type_lots: list[str],
         selected_complexes: list[str] | None,
     ):
-        years = [int(year)] if year is not None else None
+        years = _period_years(year, date_from, date_to)
         months_sel = months or None
         cities_sel = cities or None
         sources = None if (not source or source == "all") else [source]
@@ -1151,6 +1383,8 @@ def create_app() -> Dash:
             sources=sources,
             developers=None,
             type_lots=type_lots_sel,
+            date_from=_parse_dash_date(date_from),
+            date_to=_parse_dash_date(date_to),
         )
 
         cmp_df = complex_comparison_metrics(base).filter(
@@ -1294,6 +1528,8 @@ def create_app() -> Dash:
         Output("e_projects", "value"),
         Input("e_source", "value"),
         Input("e_year", "value"),
+        Input("e_date_from", "date"),
+        Input("e_date_to", "date"),
         Input("e_type_lot", "value"),
         State("e_city", "value"),
         State("e_projects", "value"),
@@ -1301,6 +1537,8 @@ def create_app() -> Dash:
     def _refresh_euler_dimensions(
         source: str,
         year: int | None,
+        date_from: str | None,
+        date_to: str | None,
         type_lot: str,
         city_selected: list[str],
         projects_selected: list[str],
@@ -1308,9 +1546,7 @@ def create_app() -> Dash:
         dff = df
         if source and source != "all":
             dff = dff.filter(pl.col("source") == source)
-        y = _dash_year(year)
-        if y is not None:
-            dff = dff.filter(pl.col("year") == y)
+        dff = _slice_by_period(dff, year, date_from, date_to)
         if type_lot:
             dff = dff.filter(pl.col("type_lot") == type_lot)
         cities = list_sorted(dff.select("city").unique().to_series().to_list())
@@ -1341,6 +1577,8 @@ def create_app() -> Dash:
         Output("e_tbl_weighted", "children"),
         Input("e_source", "value"),
         Input("e_year", "value"),
+        Input("e_date_from", "date"),
+        Input("e_date_to", "date"),
         Input("e_city", "value"),
         Input("e_projects", "value"),
         Input("e_type_lot", "value"),
@@ -1351,6 +1589,8 @@ def create_app() -> Dash:
     def _update_euler_tab(
         source: str,
         year: int | None,
+        date_from: str | None,
+        date_to: str | None,
         cities: list[str],
         projects: list[str],
         type_lot: str,
@@ -1369,9 +1609,7 @@ def create_app() -> Dash:
             dff = df
             if source and source != "all":
                 dff = dff.filter(pl.col("source") == source)
-            y = _dash_year(year)
-            if y is not None:
-                dff = dff.filter(pl.col("year") == y)
+            dff = _slice_by_period(dff, year, date_from, date_to)
             if cities:
                 dff = dff.filter(pl.col("city").is_in(cities))
             if type_lot:
@@ -1597,32 +1835,46 @@ def create_app() -> Dash:
         Output("h_city", "options"),
         Output("h_district", "options"),
         Output("h_type_lot", "options"),
+        Output("h_months", "options"),
+        Output("h_months", "value"),
         Input("h_deals_source", "value"),
         Input("h_agglomeration", "value"),
         Input("h_year", "value"),
+        Input("h_date_from", "date"),
+        Input("h_date_to", "date"),
     )
-    def _heatmap_dimension_options(deals_source: str, agglomeration: str, year: int | None):
+    def _heatmap_dimension_options(
+        deals_source: str,
+        agglomeration: str,
+        year: int | None,
+        date_from: str | None,
+        date_to: str | None,
+    ):
         dff = df
         if deals_source and deals_source != "all":
             dff = dff.filter(pl_col("source") == deals_source)
-        y = _dash_year(year)
-        if y is not None:
-            dff = dff.filter(pl_col("year") == y)
+        dff = _slice_by_period(dff, year, date_from, date_to)
         if agglomeration and agglomeration != "all":
             dff = dff.filter(pl_col("agglomeration") == agglomeration)
         cities = list_sorted(dff.select("city").unique().to_series().to_list())
         districts = list_sorted(dff.select("loc_district").unique().to_series().to_list())
         types = list_sorted(dff.select("type_lot").unique().to_series().to_list())
+        months = list_sorted(dff.select("sold_month").unique().to_series().to_list())
         return (
             [{"label": c, "value": c} for c in cities],
             [{"label": d, "value": d} for d in districts],
             [{"label": t, "value": t} for t in types],
+            [{"label": m, "value": m} for m in months],
+            [],
         )
 
     @app.callback(
         Output("h_fig_heatmap", "figure"),
         Input("h_source", "value"),
         Input("h_year", "value"),
+        Input("h_date_from", "date"),
+        Input("h_date_to", "date"),
+        Input("h_months", "value"),
         Input("h_deals_source", "value"),
         Input("h_agglomeration", "value"),
         Input("h_city", "value"),
@@ -1635,6 +1887,9 @@ def create_app() -> Dash:
     def _update_heatmap(
         source: str,
         year: int | None,
+        date_from: str | None,
+        date_to: str | None,
+        months_sel: list[str],
         deals_source: str,
         agglomeration: str,
         cities_sel: list[str],
@@ -1685,6 +1940,9 @@ def create_app() -> Dash:
             type_lot_sel=type_lot_sel,
             mortgage_mode=mortgage_mode,
             data_quality_flags=data_quality_flags,
+            date_from=date_from,
+            date_to=date_to,
+            months_sel=months_sel,
         )
 
         if filtered.is_empty():
@@ -1745,6 +2003,9 @@ def create_app() -> Dash:
         Output("h_tbl_dev_spikes", "children"),
         Input("h_source", "value"),
         Input("h_year", "value"),
+        Input("h_date_from", "date"),
+        Input("h_date_to", "date"),
+        Input("h_months", "value"),
         Input("h_deals_source", "value"),
         Input("h_agglomeration", "value"),
         Input("h_city", "value"),
@@ -1758,6 +2019,9 @@ def create_app() -> Dash:
     def _update_developer_spikes(
         h_source: str,
         year: int | None,
+        date_from: str | None,
+        date_to: str | None,
+        months_sel: list[str],
         deals_source: str,
         agglomeration: str,
         cities_sel: list[str],
@@ -1790,6 +2054,9 @@ def create_app() -> Dash:
             type_lot_sel=type_lot_sel,
             mortgage_mode=mortgage_mode,
             data_quality_flags=data_quality_flags,
+            date_from=date_from,
+            date_to=date_to,
+            months_sel=months_sel,
         )
         dff = dff.filter(pl.col("developer").is_not_null() & (pl.col("developer") != "") & pl.col("sold_month").is_not_null())
         if dff.is_empty():
@@ -1912,6 +2179,9 @@ def create_app() -> Dash:
         Output("h_tbl_object_spikes", "children"),
         Input("h_source", "value"),
         Input("h_year", "value"),
+        Input("h_date_from", "date"),
+        Input("h_date_to", "date"),
+        Input("h_months", "value"),
         Input("h_deals_source", "value"),
         Input("h_agglomeration", "value"),
         Input("h_city", "value"),
@@ -1926,6 +2196,9 @@ def create_app() -> Dash:
     def _update_object_spikes(
         h_source: str,
         year: int | None,
+        date_from: str | None,
+        date_to: str | None,
+        months_sel: list[str],
         deals_source: str,
         agglomeration: str,
         cities_sel: list[str],
@@ -1959,6 +2232,9 @@ def create_app() -> Dash:
             type_lot_sel=type_lot_sel,
             mortgage_mode=mortgage_mode,
             data_quality_flags=data_quality_flags,
+            date_from=date_from,
+            date_to=date_to,
+            months_sel=months_sel,
         )
         dff = dff.filter(pl.col("object").is_not_null() & (pl.col("object") != "") & pl.col("sold_month").is_not_null())
         excluded = set(_normalize_multi_str(object_exclude))
@@ -2084,6 +2360,9 @@ def create_app() -> Dash:
         Output("h_object_exclude", "value"),
         Input("h_source", "value"),
         Input("h_year", "value"),
+        Input("h_date_from", "date"),
+        Input("h_date_to", "date"),
+        Input("h_months", "value"),
         Input("h_deals_source", "value"),
         Input("h_agglomeration", "value"),
         Input("h_city", "value"),
@@ -2096,6 +2375,9 @@ def create_app() -> Dash:
     def _update_object_exclude_options(
         h_source: str,
         year: int | None,
+        date_from: str | None,
+        date_to: str | None,
+        months_sel: list[str],
         deals_source: str,
         agglomeration: str,
         cities_sel: list[str],
@@ -2117,6 +2399,9 @@ def create_app() -> Dash:
             type_lot_sel=type_lot_sel,
             mortgage_mode=mortgage_mode,
             data_quality_flags=data_quality_flags,
+            date_from=date_from,
+            date_to=date_to,
+            months_sel=months_sel,
         )
         objs = (
             dff.filter(pl.col("object").is_not_null() & (pl.col("object") != ""))
@@ -2136,6 +2421,9 @@ def create_app() -> Dash:
         Input("h_fig_heatmap", "clickData"),
         Input("h_source", "value"),
         Input("h_year", "value"),
+        Input("h_date_from", "date"),
+        Input("h_date_to", "date"),
+        Input("h_months", "value"),
         Input("h_deals_source", "value"),
         Input("h_agglomeration", "value"),
         Input("h_city", "value"),
@@ -2148,6 +2436,9 @@ def create_app() -> Dash:
         click_data: dict | None,
         h_source: str,
         year: int | None,
+        date_from: str | None,
+        date_to: str | None,
+        months_sel: list[str],
         deals_source: str,
         agglomeration: str,
         cities_sel: list[str],
@@ -2201,6 +2492,9 @@ def create_app() -> Dash:
             type_lot_sel=type_lot_sel,
             mortgage_mode=mortgage_mode,
             data_quality_flags=data_quality_flags,
+            date_from=date_from,
+            date_to=date_to,
+            months_sel=months_sel,
         )
 
         dff = dff.filter((pl_col("object") == obj) & (pl_col("sold_month") == month))
@@ -2240,16 +2534,6 @@ def create_app() -> Dash:
         )
 
         return title, table
-
-    @app.callback(
-        Output("tabs", "value"),
-        Input("open_egrz_tab_button", "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def _open_egrz_tab(n_clicks: int):
-        if not n_clicks:
-            raise PreventUpdate
-        return "tab_egrz"
 
     @app.callback(
         Output("egrz_log_preview", "children"),
@@ -2304,7 +2588,7 @@ def create_app() -> Dash:
         Output("egrz_table_container", "children"),
         Output("egrz_city_table_status", "children"),
         Output("egrz_city_table_container", "children"),
-        Input("tabs", "value"),
+        Input("tabs", "data"),
         Input("egrz_filter_region", "value"),
         Input("egrz_filter_work_type", "value"),
         Input("egrz_filter_text", "value"),
@@ -2478,7 +2762,7 @@ def create_app() -> Dash:
 
     @app.callback(
         Output("lg_project", "options"),
-        Input("tabs", "value"),
+        Input("tabs", "data"),
     )
     def _lot_growth_project_options(current_tab: str):
         if current_tab != "tab_lot_growth":
@@ -2699,13 +2983,23 @@ def create_app() -> Dash:
         Input("pg_deals_source", "value"),
         Input("pg_agglomeration", "value"),
         Input("pg_year", "value"),
+        Input("pg_date_from", "date"),
+        Input("pg_date_to", "date"),
     )
-    def _project_growth_dimension_options(deals_source: str, agglomeration: str, year: int | None):
+    def _project_growth_dimension_options(
+        deals_source: str,
+        agglomeration: str,
+        year: int | None,
+        date_from: str | None,
+        date_to: str | None,
+    ):
         cities, districts, types = project_growth_dimension_options(
             df,
             deals_source=deals_source,
             agglomeration=agglomeration,
             year=year,
+            date_from=_parse_dash_date(date_from),
+            date_to=_parse_dash_date(date_to),
         )
         return (
             [{"label": c, "value": c} for c in cities],
@@ -2721,6 +3015,8 @@ def create_app() -> Dash:
         Output("pg_table_container", "children"),
         Input("pg_deals_source", "value"),
         Input("pg_year", "value"),
+        Input("pg_date_from", "date"),
+        Input("pg_date_to", "date"),
         Input("pg_agglomeration", "value"),
         Input("pg_city", "value"),
         Input("pg_district", "value"),
@@ -2731,6 +3027,8 @@ def create_app() -> Dash:
     def _update_project_growth_tab(
         deals_source: str,
         year: int | None,
+        date_from: str | None,
+        date_to: str | None,
         agglomeration: str,
         cities_sel: list[str],
         districts_sel: list[str],
@@ -2748,6 +3046,8 @@ def create_app() -> Dash:
             type_lot_sel=type_lot_sel,
             mortgage_mode=mortgage_mode,
             data_quality_flags=data_quality_flags,
+            date_from=_parse_dash_date(date_from),
+            date_to=_parse_dash_date(date_to),
         )
 
         empty = go.Figure()

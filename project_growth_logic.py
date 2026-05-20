@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 import polars as pl
 
 from aggregations import apply_filters
@@ -43,6 +45,8 @@ def filter_project_growth_deals(
     type_lot_sel: object,
     mortgage_mode: str,
     data_quality_flags: object = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
 ) -> pl.DataFrame:
     flags = set(_normalize_multi_str(data_quality_flags))
     dff = df
@@ -50,8 +54,12 @@ def filter_project_growth_deals(
         dff = dff.filter(pl.col("source") == deals_source)
 
     y = _dash_year(year)
-    if y is not None:
+    if date_from is None and date_to is None and y is not None:
         dff = dff.filter(pl.col("year") == y)
+    if date_from is not None:
+        dff = dff.filter(pl.col("sold_date") >= date_from)
+    if date_to is not None:
+        dff = dff.filter(pl.col("sold_date") <= date_to)
 
     if agglomeration and agglomeration != "all":
         dff = dff.filter(pl.col("agglomeration") == agglomeration)
@@ -70,6 +78,8 @@ def filter_project_growth_deals(
         sources=None,
         developers=None,
         type_lots=_normalize_multi_str(type_lot_sel) or None,
+        date_from=date_from,
+        date_to=date_to,
     )
 
     if "exclude_wholesale" in flags and "Участие объекта в оптовой сделке" in filtered.columns:
@@ -93,13 +103,19 @@ def project_growth_dimension_options(
     deals_source: str,
     agglomeration: str,
     year: int | None,
+    date_from: date | None = None,
+    date_to: date | None = None,
 ) -> tuple[list[str], list[str], list[str]]:
     dff = df
     if deals_source and deals_source != "all":
         dff = dff.filter(pl.col("source") == deals_source)
     y = _dash_year(year)
-    if y is not None:
+    if date_from is None and date_to is None and y is not None:
         dff = dff.filter(pl.col("year") == y)
+    if date_from is not None:
+        dff = dff.filter(pl.col("sold_date") >= date_from)
+    if date_to is not None:
+        dff = dff.filter(pl.col("sold_date") <= date_to)
     if agglomeration and agglomeration != "all":
         dff = dff.filter(pl.col("agglomeration") == agglomeration)
 

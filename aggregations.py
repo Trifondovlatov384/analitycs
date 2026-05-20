@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 import polars as pl
 
 
@@ -14,13 +16,20 @@ def apply_filters(
     sources: list[str] | None,  # ["main", "crimea"]
     developers: list[str] | None,
     type_lots: list[str] | None,
+    date_from: date | None = None,
+    date_to: date | None = None,
 ) -> pl.DataFrame:
     out = df
 
     if sources:
         out = out.filter(pl.col("source").is_in(sources))
 
-    if years:
+    if date_from is not None:
+        out = out.filter(pl.col("sold_date") >= date_from)
+    if date_to is not None:
+        out = out.filter(pl.col("sold_date") <= date_to)
+
+    if years and date_from is None and date_to is None:
         out = out.filter(pl.col("year").is_in(years))
 
     if months:
