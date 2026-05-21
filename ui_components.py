@@ -142,17 +142,7 @@ def app_shell(children: list, *, matrix_available: bool) -> html.Div:
             dcc.Location(id="url", refresh=False),
             dcc.Store(id="tabs", data="tab_deals"),
             dcc.Store(id="chart_line_shape", data="linear"),
-            html.Div(
-                [
-                    html.H1("Аналитика сделок"),
-                    html.Div(
-                        "Дашборд по сделкам, комплексам и динамике цен",
-                        className="subtitle",
-                    ),
-                ],
-                className="app-header",
-            ),
-            dbc.Nav(nav_links, pills=True, className="app-nav"),
+            dbc.Nav(nav_links, pills=True, className="app-nav mt-3"),
             *children,
             dcc.Store(id="meta_matrix_available", data=matrix_available),
         ],

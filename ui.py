@@ -97,23 +97,20 @@ def layout(*, matrix_available: bool = False) -> html.Div:
                                     ),
                                 ]
                             ),
-                            className="card-modern dashboard-filters-card",
+                            className="card-modern",
                         ),
                         md=4,
-                        className="mt-3 dashboard-filters-col",
+                        className="mt-3",
                     ),
                     dbc.Col(
                         [
-                            html.Div(
-                                dbc.Row(
-                                    [
-                                        dbc.Col(kpi_card("Сделок", "kpi_total_deals"), md=4),
-                                        dbc.Col(kpi_card("Объём, ₽", "kpi_sum_budget"), md=4),
-                                        dbc.Col(kpi_card("Средняя цена лота, ₽", "kpi_avg_budget"), md=4),
-                                    ],
-                                    className="g-3 h-100",
-                                ),
-                                className="dashboard-kpi-stack",
+                            dbc.Row(
+                                [
+                                    dbc.Col(kpi_card("Сделок", "kpi_total_deals"), md=4),
+                                    dbc.Col(kpi_card("Объём, ₽", "kpi_sum_budget"), md=4),
+                                    dbc.Col(kpi_card("Средняя цена лота, ₽", "kpi_avg_budget"), md=4),
+                                ],
+                                className="g-3 dashboard-kpi-row",
                             ),
                             chart_card(
                                 "Сделки по месяцам (всего / ипотека / не ипотека)",
@@ -157,10 +154,10 @@ def layout(*, matrix_available: bool = False) -> html.Div:
                             ),
                         ],
                         md=8,
-                        className="mt-3 dashboard-kpi-col",
+                        className="mt-3",
                     ),
                 ],
-                className="g-3 dashboard-top-row",
+                className="g-3 align-items-start",
             ),
         ],
         fluid=True,
