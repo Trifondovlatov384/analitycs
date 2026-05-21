@@ -23,19 +23,6 @@ def layout(*, matrix_available: bool = False) -> html.Div:
             dbc.Row(
                 [
                     dbc.Col(
-                        dbc.Alert(
-                            "Подсказка: задайте период датами или выберите год. Агломерация — Анапа, Сочи, Крым.",
-                            color="light",
-                            className="mb-0 border-0",
-                        ),
-                        md=12,
-                    )
-                ],
-                className="mt-3",
-            ),
-            dbc.Row(
-                [
-                    dbc.Col(
                         dbc.Card(
                             dbc.CardBody(
                                 [
@@ -100,7 +87,6 @@ def layout(*, matrix_available: bool = False) -> html.Div:
                             className="card-modern",
                         ),
                         md=4,
-                        className="mt-3",
                     ),
                     dbc.Col(
                         [
@@ -154,7 +140,6 @@ def layout(*, matrix_available: bool = False) -> html.Div:
                             ),
                         ],
                         md=8,
-                        className="mt-3",
                     ),
                 ],
                 className="g-3 align-items-start",

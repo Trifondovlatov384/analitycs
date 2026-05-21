@@ -30,14 +30,7 @@ from aggregations import (
     monthly_deal_counts,
     yearly_top_complexes,
 )
-from data_loader import (
-    list_sorted,
-    load_crimea_deals,
-    load_deals,
-    paths_point_to_same_file,
-    resolve_crimea_path,
-    resolve_data_path,
-)
+from data_loader import list_sorted, load_combined_deals
 from heatmap_loader import load_matrix_csv
 from project_growth_logic import (
     compute_project_growth,
@@ -50,7 +43,7 @@ from ui_components import ALL_TAB_IDS, HIDDEN_TABS
 
 ADMIN_ACCESS_KEY = os.environ.get("ADMIN_ACCESS_KEY", "dev-admin-key")
 HIDDEN_TAB_IDS_SET = {tab_id for tab_id, _ in HIDDEN_TABS}
-SOURCE_LABELS = {"main": "Основной файл", "crimea": "Крым"}
+SOURCE_LABELS = {"main": "may2026", "analitic": "Analitic", "crimea": "Крым"}
 SOURCE_DROPDOWN_IDS = [
     "source",
     "c_source",
@@ -820,16 +813,7 @@ def make_euler_figure(devs: list[str], sizes: dict[str, int], pair: dict[tuple[s
 
 
 def create_app() -> Dash:
-    df_main = load_deals().with_columns(pl.lit("main").alias("source"))
-    if paths_point_to_same_file(resolve_data_path(), resolve_crimea_path()):
-        df_crimea = pl.DataFrame({"source": []})
-    else:
-        try:
-            df_crimea = load_crimea_deals().with_columns(pl.lit("crimea").alias("source"))
-        except Exception:
-            df_crimea = pl.DataFrame({"source": []})
-
-    df = pl.concat([df_main, df_crimea], how="diagonal")
+    df = load_combined_deals()
     if "deal_status" not in df.columns:
         df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias("deal_status"))
     df = df.with_columns(

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable, Optional
 
 import polars as pl
 
 CRIMEA_PATH_DEFAULT = "may2026.csv"
 MAIN_DATA_DEFAULT = "may2026.csv"
+ANALYTIC_PATH_DEFAULT = "Analitic.csv"
 
 ANAPA_CITIES = {
     "Варваровка с.",
@@ -61,6 +63,47 @@ def resolve_crimea_path() -> str:
     if env_path:
         return env_path
     return CRIMEA_PATH_DEFAULT
+
+
+def resolve_analitic_path() -> str:
+    env_path = os.environ.get("ANALYTIC_PATH")
+    if env_path:
+        return env_path
+    return ANALYTIC_PATH_DEFAULT
+
+
+def load_combined_deals() -> pl.DataFrame:
+    """Load all available deal CSVs (may2026, Analitic, Crimea) with distinct source tags."""
+    frames: list[pl.DataFrame] = []
+    main_path = resolve_data_path()
+    analitic_path = resolve_analitic_path()
+    crimea_path = resolve_crimea_path()
+
+    if Path(main_path).exists():
+        frames.append(
+            load_deals(DataConfig(data_path=main_path)).with_columns(pl.lit("main").alias("source"))
+        )
+
+    if Path(analitic_path).exists() and not paths_point_to_same_file(main_path, analitic_path):
+        frames.append(
+            load_deals(DataConfig(data_path=analitic_path)).with_columns(pl.lit("analitic").alias("source"))
+        )
+
+    if Path(crimea_path).exists():
+        same_as_main = paths_point_to_same_file(crimea_path, main_path)
+        same_as_analitic = paths_point_to_same_file(crimea_path, analitic_path)
+        if not same_as_main and not same_as_analitic:
+            try:
+                frames.append(
+                    load_crimea_deals(crimea_path).with_columns(pl.lit("crimea").alias("source"))
+                )
+            except Exception:
+                pass
+
+    if not frames:
+        return pl.DataFrame()
+
+    return pl.concat(frames, how="diagonal")
 
 
 def load_deals(cfg: Optional[DataConfig] = None) -> pl.DataFrame:
