@@ -7,9 +7,11 @@ from typing import Iterable, Optional
 
 import polars as pl
 
-CRIMEA_PATH_DEFAULT = "may2026.csv"
-MAIN_DATA_DEFAULT = "may2026.csv"
+CRIMEA_PATH_DEFAULT = "june2026.csv"
+MAIN_DATA_DEFAULT = "june2026.csv"
 ANALYTIC_PATH_DEFAULT = "Analitic.csv"
+# Newer bnMAP exports first; only one is loaded unless BNMAP_EXPORT_PATHS is set.
+BNMAP_EXPORT_CANDIDATES = ("june2026.csv", "may2026.csv")
 
 ANAPA_CITIES = {
     "Варваровка с.",
@@ -38,7 +40,38 @@ def resolve_data_path() -> str:
     env_path = os.environ.get("DATA_PATH")
     if env_path:
         return env_path
+    for name in BNMAP_EXPORT_CANDIDATES:
+        if Path(name).exists():
+            return name
     return MAIN_DATA_DEFAULT
+
+
+def _source_tag_for_path(path: str) -> str:
+    return Path(path).stem
+
+
+def resolve_bnmap_export_paths() -> list[str]:
+    """
+    bnMAP CSV paths to load. By default picks the newest available export (june2026 > may2026).
+    Set BNMAP_EXPORT_PATHS=comma,separated,paths to load several files (e.g. for comparison).
+    """
+    explicit = os.environ.get("BNMAP_EXPORT_PATHS")
+    if explicit:
+        raw = [p.strip() for p in explicit.split(",") if p.strip()]
+    else:
+        raw = [p for p in BNMAP_EXPORT_CANDIDATES if Path(p).exists()]
+        if raw:
+            raw = [raw[0]]
+        else:
+            fallback = resolve_data_path()
+            if Path(fallback).exists():
+                raw = [fallback]
+
+    out: list[str] = []
+    for path in raw:
+        if Path(path).exists() and not any(paths_point_to_same_file(path, seen) for seen in out):
+            out.append(path)
+    return out
 
 
 def _csv_has_bnmap_columns(path: str) -> bool:
@@ -73,26 +106,32 @@ def resolve_analitic_path() -> str:
 
 
 def load_combined_deals() -> pl.DataFrame:
-    """Load all available deal CSVs (may2026, Analitic, Crimea) with distinct source tags."""
+    """Load bnMAP exports (june2026 / may2026), Analitic, and optional Crimea with source tags."""
     frames: list[pl.DataFrame] = []
-    main_path = resolve_data_path()
+    bnmap_paths = resolve_bnmap_export_paths()
     analitic_path = resolve_analitic_path()
     crimea_path = resolve_crimea_path()
 
-    if Path(main_path).exists():
+    loaded_paths: list[str] = []
+    for bnmap_path in bnmap_paths:
         frames.append(
-            load_deals(DataConfig(data_path=main_path)).with_columns(pl.lit("main").alias("source"))
+            load_deals(DataConfig(data_path=bnmap_path)).with_columns(
+                pl.lit(_source_tag_for_path(bnmap_path)).alias("source")
+            )
         )
+        loaded_paths.append(bnmap_path)
 
-    if Path(analitic_path).exists() and not paths_point_to_same_file(main_path, analitic_path):
+    if Path(analitic_path).exists() and not any(
+        paths_point_to_same_file(analitic_path, p) for p in loaded_paths
+    ):
         frames.append(
             load_deals(DataConfig(data_path=analitic_path)).with_columns(pl.lit("analitic").alias("source"))
         )
 
     if Path(crimea_path).exists():
-        same_as_main = paths_point_to_same_file(crimea_path, main_path)
+        same_as_loaded = any(paths_point_to_same_file(crimea_path, p) for p in loaded_paths)
         same_as_analitic = paths_point_to_same_file(crimea_path, analitic_path)
-        if not same_as_main and not same_as_analitic:
+        if not same_as_loaded and not same_as_analitic:
             try:
                 frames.append(
                     load_crimea_deals(crimea_path).with_columns(pl.lit("crimea").alias("source"))

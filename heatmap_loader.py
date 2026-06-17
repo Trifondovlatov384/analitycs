@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -12,6 +13,43 @@ class MatrixCsv:
     row_label: str
     columns: list[str]
     df: pl.DataFrame  # columns: [row_label] + columns
+
+
+def parse_month_label(label: str) -> tuple[int, int]:
+    """Sort key for MM.YYYY or YYYY-MM month labels."""
+    label = str(label).strip()
+    m = re.match(r"^(\d{2})\.(\d{4})$", label)
+    if m:
+        return int(m.group(2)), int(m.group(1))
+    m2 = re.match(r"^(\d{4})-(\d{2})$", label)
+    if m2:
+        return int(m2.group(1)), int(m2.group(2))
+    return 0, 0
+
+
+def sold_month_to_label(sold_month: str) -> str:
+    """2026-05 -> 05.2026"""
+    parts = str(sold_month).split("-", 1)
+    if len(parts) != 2:
+        return str(sold_month)
+    return f"{parts[1]}.{parts[0]}"
+
+
+def month_label_to_sold_month(label: str) -> str | None:
+    """05.2026 or 2026-05 -> 2026-05"""
+    label = str(label).strip()
+    if re.match(r"^\d{4}-\d{2}$", label):
+        return label
+    m = re.match(r"^(\d{2})\.(\d{4})$", label)
+    if m:
+        return f"{m.group(2)}-{m.group(1)}"
+    if len(label) >= 7 and re.match(r"^\d{4}-\d{2}", label):
+        return label[:7]
+    return None
+
+
+def sort_month_labels(labels: list[str]) -> list[str]:
+    return sorted(labels, key=parse_month_label)
 
 
 def _to_number(v: str) -> int:

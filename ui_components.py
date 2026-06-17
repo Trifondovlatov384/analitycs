@@ -17,7 +17,14 @@ HIDDEN_TABS: list[tuple[str, str]] = [
     ("tab_project_growth", "Рост проектов"),
 ]
 
+# Скрыты из меню, но открываются по ?tab=... без ключа доступа
+DIRECT_LINK_TAB_IDS = {"tab_egrz"}
+
+# Скрыты из меню и требуют ?access=ADMIN_ACCESS_KEY
+ADMIN_ACCESS_TAB_IDS = {tab_id for tab_id, _ in HIDDEN_TABS if tab_id not in DIRECT_LINK_TAB_IDS}
+
 ALL_TAB_IDS = [t[0] for t in PUBLIC_TABS + HIDDEN_TABS]
+PUBLIC_TAB_IDS = [t[0] for t in PUBLIC_TABS]
 
 
 def kpi_card(title: str, value_id: str) -> dbc.Card:
@@ -125,14 +132,17 @@ def source_filter_block(dropdown_id: str) -> html.Div:
 
 
 def app_shell(children: list, *, matrix_available: bool) -> html.Div:
-    nav_links = [
-        dbc.NavItem(
-            dbc.NavLink(
-                label,
-                id={"type": "nav-tab", "id": tab_id},
-                active=(tab_id == "tab_deals"),
-                n_clicks=0,
-            )
+    tab_buttons = [
+        html.Button(
+            label,
+            id={"type": "nav-tab", "id": tab_id},
+            type="button",
+            n_clicks=0,
+            className=(
+                "app-tab-btn app-tab-btn--active"
+                if tab_id == "tab_deals"
+                else "app-tab-btn"
+            ),
         )
         for tab_id, label in PUBLIC_TABS
     ]
@@ -142,7 +152,7 @@ def app_shell(children: list, *, matrix_available: bool) -> html.Div:
             dcc.Location(id="url", refresh=False),
             dcc.Store(id="tabs", data="tab_deals"),
             dcc.Store(id="chart_line_shape", data="linear"),
-            dbc.Nav(nav_links, pills=True, className="app-nav"),
+            html.Div(tab_buttons, className="app-tab-bar", role="tablist"),
             *children,
             dcc.Store(id="meta_matrix_available", data=matrix_available),
         ],

@@ -31,7 +31,13 @@ from aggregations import (
     yearly_top_complexes,
 )
 from data_loader import list_sorted, load_combined_deals
-from heatmap_loader import load_matrix_csv
+from heatmap_loader import (
+    load_matrix_csv,
+    month_label_to_sold_month,
+    parse_month_label,
+    sold_month_to_label,
+    sort_month_labels,
+)
 from project_growth_logic import (
     compute_project_growth,
     compute_room_growth,
@@ -39,11 +45,10 @@ from project_growth_logic import (
     project_growth_dimension_options,
 )
 from ui import layout
-from ui_components import ALL_TAB_IDS, HIDDEN_TABS
+from ui_components import ADMIN_ACCESS_TAB_IDS, ALL_TAB_IDS, PUBLIC_TAB_IDS
 
 ADMIN_ACCESS_KEY = os.environ.get("ADMIN_ACCESS_KEY", "dev-admin-key")
-HIDDEN_TAB_IDS_SET = {tab_id for tab_id, _ in HIDDEN_TABS}
-SOURCE_LABELS = {"main": "may2026", "analitic": "Analitic", "crimea": "Крым"}
+SOURCE_LABELS = {"analitic": "Analitic", "crimea": "Крым"}
 SOURCE_DROPDOWN_IDS = [
     "source",
     "c_source",
@@ -183,12 +188,7 @@ def build_meta_date_bounds(df: pl.DataFrame) -> dict[str, str | None]:
 
 
 def _matrix_csv_available() -> bool:
-    candidates = [
-        os.environ.get("CRIMEA_MATRIX_PATH", ""),
-        str(Path.cwd() / "Аналитика сделок по Крыму - По кол-ву.csv"),
-        "/Users/nikitavisicki/Downloads/Аналитика сделок по Крыму - По кол-ву.csv",
-    ]
-    return any(p and Path(p).exists() for p in candidates)
+    return bool(_crimea_matrix_path())
 
 
 def _normalize_ru(value: object) -> str:
@@ -286,6 +286,155 @@ def _apply_egrz_filters(
     return filtered_rows
 
 
+def _filter_by_deals_source(dff: pl.DataFrame, deals_source: str) -> pl.DataFrame:
+    if not deals_source or deals_source == "all":
+        return dff
+    # Legacy dropdown value before sources were named after CSV files.
+    if deals_source == "main":
+        return dff.filter(pl_col("source") != "analitic")
+    return dff.filter(pl_col("source") == deals_source)
+
+
+def _crimea_matrix_path() -> str:
+    candidates = [
+        os.environ.get("CRIMEA_MATRIX_PATH", ""),
+        str(Path.cwd() / "Аналитика сделок по Крыму - По кол-ву.csv"),
+        "/Users/nikitavisicki/Downloads/Аналитика сделок по Крыму - По кол-ву.csv",
+    ]
+    return next((p for p in candidates if p and Path(p).exists()), "")
+
+
+def _limit_heatmap_columns(
+    months: list[str],
+    z: list[list[int]],
+    *,
+    year: object,
+    date_from: object,
+    date_to: object,
+) -> tuple[list[str], list[list[int]]]:
+    d0 = _parse_dash_date(date_from)
+    d1 = _parse_dash_date(date_to)
+    y = _dash_year(year)
+    if d0 is None and d1 is None and y is None:
+        return months, z
+
+    keep_idxs: list[int] = []
+    for i, m in enumerate(months):
+        yr, mo = parse_month_label(m)
+        if yr == 0:
+            keep_idxs.append(i)
+            continue
+        if y is not None and yr != y:
+            continue
+        month_start = date(yr, mo, 1)
+        if d0 is not None and month_start < date(d0.year, d0.month, 1):
+            continue
+        if d1 is not None and month_start > date(d1.year, d1.month, 1):
+            continue
+        keep_idxs.append(i)
+
+    if not keep_idxs:
+        return [], []
+    new_months = [months[i] for i in keep_idxs]
+    new_z = [[row[i] for i in keep_idxs] for row in z]
+    return new_months, new_z
+
+
+def _build_heatmap_from_deals(
+    filtered: pl.DataFrame,
+    top_n: int,
+) -> tuple[list[str], list[str], list[str], list[list[int]]]:
+    if filtered.is_empty():
+        return [], [], [], []
+
+    period_months = list_sorted(filtered.select("sold_month").unique().to_series().to_list())
+    grouped = filtered.group_by(["object", "sold_month"]).agg(pl.len().alias("deals"))
+    top_objects = (
+        grouped.group_by("object")
+        .agg(pl.sum("deals").alias("total"))
+        .sort("total", descending=True)
+        .head(int(top_n))
+        .select("object")
+        .to_series()
+        .to_list()
+    )
+
+    pivot = (
+        grouped.filter(pl.col("object").is_in(top_objects))
+        .pivot(index="object", columns="sold_month", values="deals", aggregate_function="sum")
+        .fill_null(0)
+    )
+    for mcol in period_months:
+        if mcol not in pivot.columns:
+            pivot = pivot.with_columns(pl.lit(0).alias(mcol))
+    pivot = pivot.select(["object"] + period_months)
+    pivot = pivot.join(pl.DataFrame({"object": top_objects}), on="object", how="right").fill_null(0)
+    pivot = pivot.select(["object"] + period_months)
+
+    z = [
+        [int(v) if v is not None else 0 for v in pivot.select(period_months).row(i)]
+        for i in range(pivot.height)
+    ]
+    totals = [sum(row) for row in z]
+    display_objects = [f"{name} ({total})" for name, total in zip(top_objects, totals)]
+    month_labels = [sold_month_to_label(m) for m in period_months]
+    return top_objects, display_objects, month_labels, z
+
+
+def _build_matrix_heatmap_extended(
+    matrix_path: str,
+    filtered: pl.DataFrame,
+    top_n: int,
+) -> tuple[list[str], list[str], list[str], list[list[int]]] | None:
+    m = load_matrix_csv(matrix_path)
+    if not m or m.df.is_empty():
+        return None
+
+    matrix_cols = list(m.columns)
+    deals_months = list_sorted(filtered.select("sold_month").unique().to_series().to_list())
+    extra_cols = [sold_month_to_label(sm) for sm in deals_months if sold_month_to_label(sm) not in matrix_cols]
+    all_cols = sort_month_labels(matrix_cols + extra_cols)
+
+    deals_grouped = filtered.group_by(["object", "sold_month"]).agg(pl.len().alias("deals"))
+    deals_map: dict[str, dict[str, int]] = {}
+    for row in deals_grouped.iter_rows(named=True):
+        obj = str(row["object"])
+        lbl = sold_month_to_label(row["sold_month"])
+        deals_map.setdefault(obj, {})[lbl] = int(row["deals"])
+
+    matrix_map: dict[str, dict[str, int]] = {}
+    for row in m.df.iter_rows(named=True):
+        obj = str(row[m.row_label])
+        matrix_map[obj] = {c: int(row.get(c) or 0) for c in matrix_cols}
+
+    all_objects = set(matrix_map) | set(deals_map)
+
+    def total_for(obj: str) -> int:
+        total = 0
+        if obj in matrix_map:
+            total += sum(matrix_map[obj].get(c, 0) for c in matrix_cols)
+        if obj in deals_map:
+            total += sum(deals_map[obj].get(c, 0) for c in extra_cols)
+        return total
+
+    top_objects = sorted(all_objects, key=total_for, reverse=True)[: int(top_n)]
+    z: list[list[int]] = []
+    for obj in top_objects:
+        row_vals: list[int] = []
+        for col in all_cols:
+            val = 0
+            if col in matrix_cols and obj in matrix_map:
+                val = matrix_map[obj].get(col, 0)
+            elif col in extra_cols and obj in deals_map:
+                val = deals_map[obj].get(col, 0)
+            row_vals.append(val)
+        z.append(row_vals)
+
+    totals = [sum(row) for row in z]
+    display_objects = [f"{name} ({total})" for name, total in zip(top_objects, totals)]
+    return top_objects, display_objects, all_cols, z
+
+
 def _filter_heatmap_deals(
     dff: pl.DataFrame,
     *,
@@ -302,8 +451,7 @@ def _filter_heatmap_deals(
     months_sel: object = None,
 ) -> pl.DataFrame:
     flags = set(_normalize_multi_str(data_quality_flags))
-    if deals_source and deals_source != "all":
-        dff = dff.filter(pl_col("source") == deals_source)
+    dff = _filter_by_deals_source(dff, deals_source)
     d0 = _parse_dash_date(date_from)
     d1 = _parse_dash_date(date_to)
     if d0 is not None:
@@ -818,9 +966,9 @@ def create_app() -> Dash:
         df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias("deal_status"))
     df = df.with_columns(
         [
-            pl.when(pl.col("source") == "main")
-            .then(pl.col("ipoteka"))
-            .otherwise(pl.col("deal_status"))
+            pl.when(pl.col("source") == "analitic")
+            .then(pl.col("deal_status"))
+            .otherwise(pl.col("ipoteka"))
             .cast(pl.Utf8)
             .alias("deal_status"),
         ]
@@ -889,6 +1037,17 @@ def create_app() -> Dash:
         ]
 
     @app.callback(
+        Output({"type": "nav-tab", "id": ALL}, "className"),
+        Input("tabs", "data"),
+    )
+    def _update_nav_active(active: str | None):
+        active = active or "tab_deals"
+        return [
+            "app-tab-btn app-tab-btn--active" if tab_id == active else "app-tab-btn"
+            for tab_id in PUBLIC_TAB_IDS
+        ]
+
+    @app.callback(
         Output("tabs", "data"),
         Input({"type": "nav-tab", "id": ALL}, "n_clicks"),
         Input("url", "search"),
@@ -904,7 +1063,7 @@ def create_app() -> Dash:
             params = parse_qs(search.lstrip("?"))
             tab = (params.get("tab") or [None])[0]
             access = (params.get("access") or [None])[0]
-            if tab in HIDDEN_TAB_IDS_SET:
+            if tab in ADMIN_ACCESS_TAB_IDS:
                 if access == ADMIN_ACCESS_KEY:
                     return tab
                 return "tab_deals"
@@ -1835,8 +1994,7 @@ def create_app() -> Dash:
         date_to: str | None,
     ):
         dff = df
-        if deals_source and deals_source != "all":
-            dff = dff.filter(pl_col("source") == deals_source)
+        dff = _filter_by_deals_source(dff, deals_source)
         dff = _slice_by_period(dff, year, date_from, date_to)
         if agglomeration and agglomeration != "all":
             dff = dff.filter(pl_col("agglomeration") == agglomeration)
@@ -1884,33 +2042,60 @@ def create_app() -> Dash:
         top_n: int,
     ):
         if source == "matrix_crimea":
-            # By requirement: only two files. We try common locations.
-            candidates = [
-                os.environ.get("CRIMEA_MATRIX_PATH", ""),
-                str(Path.cwd() / "Аналитика сделок по Крыму - По кол-ву.csv"),
-                "/Users/nikitavisicki/Downloads/Аналитика сделок по Крыму - По кол-ву.csv",
-            ]
-            matrix_path = next((p for p in candidates if p and Path(p).exists()), "")
-            if not matrix_path:
-                return make_heatmap_figure(objects=[], display_objects=None, months=[], z=[])
+            matrix_path = _crimea_matrix_path()
+            filtered = _filter_heatmap_deals(
+                df,
+                deals_source=deals_source,
+                year=year,
+                agglomeration=agglomeration,
+                cities_sel=cities_sel,
+                districts_sel=districts_sel,
+                type_lot_sel=type_lot_sel,
+                mortgage_mode=mortgage_mode,
+                data_quality_flags=data_quality_flags,
+                date_from=date_from,
+                date_to=date_to,
+                months_sel=months_sel,
+            )
 
-            m = load_matrix_csv(matrix_path)
-            if not m or m.df.is_empty():
-                return make_heatmap_figure(objects=[], display_objects=None, months=[], z=[])
+            if matrix_path:
+                extended = _build_matrix_heatmap_extended(matrix_path, filtered, int(top_n))
+                if extended:
+                    objects, display_objects, months, z = extended
+                    months, z = _limit_heatmap_columns(
+                        months, z, year=year, date_from=date_from, date_to=date_to
+                    )
+                    if months:
+                        return make_heatmap_figure(
+                            objects=objects, display_objects=display_objects, months=months, z=z
+                        )
 
-            # Sort by total descending, take top_n
-            cols = m.columns
-            dfm = m.df
-            if cols:
-                dfm = dfm.with_columns(pl.sum_horizontal([pl.col(c) for c in cols]).alias("_total"))
-                dfm = dfm.sort("_total", descending=True).drop("_total").head(int(top_n))
+                m = load_matrix_csv(matrix_path)
+                if m and not m.df.is_empty():
+                    cols = m.columns
+                    dfm = m.df
+                    if cols:
+                        dfm = dfm.with_columns(
+                            pl.sum_horizontal([pl.col(c) for c in cols]).alias("_total")
+                        )
+                        dfm = dfm.sort("_total", descending=True).drop("_total").head(int(top_n))
 
-            objects = dfm[m.row_label].to_list()
-            months = cols
-            z = [dfm.select(cols).row(i) for i in range(dfm.height)]
-            z = [[int(v) if v is not None else 0 for v in row] for row in z]
-            totals = [sum(row) for row in z]
-            display_objects = [f"{name} ({total})" for name, total in zip(objects, totals)]
+                    objects = dfm[m.row_label].to_list()
+                    months = cols
+                    z = [dfm.select(cols).row(i) for i in range(dfm.height)]
+                    z = [[int(v) if v is not None else 0 for v in row] for row in z]
+                    months, z = _limit_heatmap_columns(
+                        months, z, year=year, date_from=date_from, date_to=date_to
+                    )
+                    if months:
+                        totals = [sum(row) for row in z]
+                        display_objects = [f"{name} ({total})" for name, total in zip(objects, totals)]
+                        return make_heatmap_figure(
+                            objects=objects, display_objects=display_objects, months=months, z=z
+                        )
+
+            # Matrix missing or empty — build from deal CSV (includes 05.2026 and newer).
+            objects, display_objects, months, z = _build_heatmap_from_deals(filtered, int(top_n))
             return make_heatmap_figure(objects=objects, display_objects=display_objects, months=months, z=z)
 
         # Default: build from deals with the same filters used across the heatmap tab.
@@ -1932,54 +2117,7 @@ def create_app() -> Dash:
         if filtered.is_empty():
             return make_heatmap_figure(objects=[], display_objects=None, months=[], z=[])
 
-        # count deals per complex per month
-        grouped = (
-            filtered.group_by(["object", "sold_month"])
-            .agg(pl.len().alias("deals"))
-        )
-
-        # total by complex -> top_n
-        top_objects = (
-            grouped.group_by("object")
-            .agg(pl.sum("deals").alias("total"))
-            .sort("total", descending=True)
-            .head(int(top_n))
-            .select("object")
-            .to_series()
-            .to_list()
-        )
-
-        grouped = grouped.filter(pl.col("object").is_in(top_objects))
-
-        months = list_sorted(grouped.select("sold_month").unique().to_series().to_list())
-        objects = top_objects
-
-        # Build dense matrix
-        pivot = (
-            grouped.pivot(
-                index="object",
-                columns="sold_month",
-                values="deals",
-                aggregate_function="sum",
-            )
-            .fill_null(0)
-        )
-
-        # Ensure column order for months and row order for objects
-        for mcol in months:
-            if mcol not in pivot.columns:
-                pivot = pivot.with_columns(pl.lit(0).alias(mcol))
-        pivot = pivot.select(["object"] + months)
-
-        # Align rows
-        pivot = pivot.join(pl.DataFrame({"object": objects}), on="object", how="right").fill_null(0)
-        pivot = pivot.select(["object"] + months)
-
-        z = [pivot.select(months).row(i) for i in range(pivot.height)]
-        z = [[int(v) if v is not None else 0 for v in row] for row in z]
-
-        totals = [sum(row) for row in z]
-        display_objects = [f"{name} ({total})" for name, total in zip(objects, totals)]
+        objects, display_objects, months, z = _build_heatmap_from_deals(filtered, int(top_n))
         return make_heatmap_figure(objects=objects, display_objects=display_objects, months=months, z=z)
 
     @app.callback(
@@ -2431,22 +2569,29 @@ def create_app() -> Dash:
         mortgage_mode: str,
         data_quality_flags: list[str],
     ):
-        if h_source == "matrix_crimea":
-            return "Детализация недоступна для матрицы.", dbc.Alert(
-                "В режиме «Крым (матрица)» у нас нет списка сделок поштучно. Переключите «Источник» на «Основные сделки», чтобы видеть детализацию.",
-                color="light",
-            )
-
         if not click_data or "points" not in click_data or not click_data["points"]:
             return "Кликните по ячейке, чтобы увидеть сделки.", ""
 
         p = click_data["points"][0]
         month_raw = p.get("x")
-        month = None
-        if month_raw is not None:
+        month = month_label_to_sold_month(str(month_raw)) if month_raw is not None else None
+        if month is None and month_raw is not None:
             month_s = str(month_raw)
-            # Plotly may send either "YYYY-MM" or full date like "YYYY-MM-01".
             month = month_s[:7] if len(month_s) >= 7 else month_s
+
+        if h_source == "matrix_crimea" and not month:
+            return "Детализация недоступна для матрицы.", dbc.Alert(
+                "В режиме «Крым (матрица)» детализация доступна только для месяцев, "
+                "добавленных из CSV сделок (например 03.2026–05.2026). "
+                "Для остальных месяцев переключите источник на «Сделки (CSV)».",
+                color="light",
+            )
+        if h_source not in ("deals", "matrix_crimea"):
+            return "Детализация недоступна.", dbc.Alert(
+                "Переключите «Источник» на «Сделки (CSV)», чтобы видеть детализацию.",
+                color="light",
+            )
+
         obj = None
 
         # Preferred source: customdata (original object name).
