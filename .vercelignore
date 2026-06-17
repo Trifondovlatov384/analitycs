@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.git/
+output/
+scripts/
+data/
+Реестр (общедоступные сведения).csv
+bnMAP_pro_*.csv
+*.xlsx
