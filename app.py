@@ -48,7 +48,7 @@ from ui import layout
 from ui_components import ADMIN_ACCESS_TAB_IDS, ALL_TAB_IDS, PUBLIC_TAB_IDS
 
 ADMIN_ACCESS_KEY = os.environ.get("ADMIN_ACCESS_KEY", "dev-admin-key")
-SOURCE_LABELS = {"analitic": "Analitic", "crimea": "Крым"}
+SOURCE_LABELS = {"analitic": "Analitic", "crimea": "Крым", "kk2026": "KK2026 (Краснодарский край)"}
 SOURCE_DROPDOWN_IDS = [
     "source",
     "c_source",
@@ -81,6 +81,12 @@ def pl_from_dicts(rows: list[dict]) -> pl.DataFrame:
 
 def pl_col(name: str) -> pl.Expr:
     return pl.col(name)
+
+
+def _skip_unless_tab(active_tab: str | None, *tab_ids: str) -> None:
+    """Avoid heavy tab callbacks on initial load (only the dashboard tab is visible)."""
+    if (active_tab or "tab_deals") not in tab_ids:
+        raise PreventUpdate
 
 
 def _dash_int(value: object, default: int) -> int:
@@ -1177,8 +1183,7 @@ def create_app() -> Dash:
         months_selected: list[str],
     ):
         dff = df
-        if source and source != "all":
-            dff = dff.filter(pl_col("source") == source)
+        dff = _filter_by_deals_source(dff, source or "all")
         d0 = _parse_dash_date(date_from)
         d1 = _parse_dash_date(date_to)
         if d0 is not None:
@@ -1325,6 +1330,7 @@ def create_app() -> Dash:
         Input("c_year", "value"),
         Input("c_date_from", "date"),
         Input("c_date_to", "date"),
+        Input("tabs", "data"),
         State("c_city", "value"),
         State("c_type_lot", "value"),
         State("c_months", "value"),
@@ -1336,14 +1342,15 @@ def create_app() -> Dash:
         year: int | None,
         date_from: str | None,
         date_to: str | None,
+        active_tab: str | None,
         city_selected: list[str],
         type_lot_selected: list[str],
         months_selected: list[str],
         object_selected: str | None,
     ):
+        _skip_unless_tab(active_tab, "tab_complexes")
         dff = df
-        if source and source != "all":
-            dff = dff.filter(pl_col("source") == source)
+        dff = _filter_by_deals_source(dff, source or "all")
         dff = _slice_by_period(dff, year, date_from, date_to)
         if agglomeration and agglomeration != "all":
             dff = dff.filter(pl_col("agglomeration") == agglomeration)
@@ -1387,6 +1394,7 @@ def create_app() -> Dash:
         Input("c_mortgage_mode", "value"),
         Input("c_type_lot", "value"),
         Input("c_object", "value"),
+        Input("tabs", "data"),
     )
     def _update_complexes_tab(
         year: int | None,
@@ -1399,7 +1407,9 @@ def create_app() -> Dash:
         mortgage_mode: str,
         type_lots: list[str],
         complex_name: str | None,
+        active_tab: str | None,
     ):
+        _skip_unless_tab(active_tab, "tab_complexes")
         years = _period_years(year, date_from, date_to)
         months_sel = months or None
         cities_sel = cities or None
@@ -1443,6 +1453,7 @@ def create_app() -> Dash:
         Input("cmp_year", "value"),
         Input("cmp_date_from", "date"),
         Input("cmp_date_to", "date"),
+        Input("tabs", "data"),
         State("cmp_city", "value"),
         State("cmp_type_lot", "value"),
         State("cmp_months", "value"),
@@ -1453,13 +1464,14 @@ def create_app() -> Dash:
         year: int | None,
         date_from: str | None,
         date_to: str | None,
+        active_tab: str | None,
         city_selected: list[str],
         type_lot_selected: list[str],
         months_selected: list[str],
     ):
+        _skip_unless_tab(active_tab, "tab_compare")
         dff = df
-        if source and source != "all":
-            dff = dff.filter(pl_col("source") == source)
+        dff = _filter_by_deals_source(dff, source or "all")
         dff = _slice_by_period(dff, year, date_from, date_to)
         if agglomeration and agglomeration != "all":
             dff = dff.filter(pl_col("agglomeration") == agglomeration)
@@ -1497,6 +1509,7 @@ def create_app() -> Dash:
         Input("cmp_mortgage_mode", "value"),
         Input("cmp_type_lot", "value"),
         Input("cmp_selected_complexes", "data"),
+        Input("tabs", "data"),
     )
     def _update_compare_tab(
         year: int | None,
@@ -1509,7 +1522,9 @@ def create_app() -> Dash:
         mortgage_mode: str,
         type_lots: list[str],
         selected_complexes: list[str] | None,
+        active_tab: str | None,
     ):
+        _skip_unless_tab(active_tab, "tab_compare")
         years = _period_years(year, date_from, date_to)
         months_sel = months or None
         cities_sel = cities or None
@@ -1674,6 +1689,7 @@ def create_app() -> Dash:
         Input("e_date_from", "date"),
         Input("e_date_to", "date"),
         Input("e_type_lot", "value"),
+        Input("tabs", "data"),
         State("e_city", "value"),
         State("e_projects", "value"),
     )
@@ -1683,12 +1699,13 @@ def create_app() -> Dash:
         date_from: str | None,
         date_to: str | None,
         type_lot: str,
+        active_tab: str | None,
         city_selected: list[str],
         projects_selected: list[str],
     ):
+        _skip_unless_tab(active_tab, "tab_euler")
         dff = df
-        if source and source != "all":
-            dff = dff.filter(pl.col("source") == source)
+        dff = _filter_by_deals_source(dff, source or "all")
         dff = _slice_by_period(dff, year, date_from, date_to)
         if type_lot:
             dff = dff.filter(pl.col("type_lot") == type_lot)
@@ -1728,6 +1745,7 @@ def create_app() -> Dash:
         Input("e_target_budget", "value"),
         Input("e_delta_budget", "value"),
         Input("e_corridor_step", "value"),
+        Input("tabs", "data"),
     )
     def _update_euler_tab(
         source: str,
@@ -1740,7 +1758,9 @@ def create_app() -> Dash:
         target_budget: int,
         delta_budget: int,
         corridor_step: int,
+        active_tab: str | None,
     ):
+        _skip_unless_tab(active_tab, "tab_euler")
         target_budget = _dash_int(target_budget, 8_000_000)
         delta_budget = _dash_int(delta_budget, 3_000_000)
         corridor_step = _dash_int(corridor_step, 1_000_000)
@@ -1985,6 +2005,7 @@ def create_app() -> Dash:
         Input("h_year", "value"),
         Input("h_date_from", "date"),
         Input("h_date_to", "date"),
+        Input("tabs", "data"),
     )
     def _heatmap_dimension_options(
         deals_source: str,
@@ -1992,7 +2013,9 @@ def create_app() -> Dash:
         year: int | None,
         date_from: str | None,
         date_to: str | None,
+        active_tab: str | None,
     ):
+        _skip_unless_tab(active_tab, "tab_heatmap")
         dff = df
         dff = _filter_by_deals_source(dff, deals_source)
         dff = _slice_by_period(dff, year, date_from, date_to)
@@ -2025,6 +2048,7 @@ def create_app() -> Dash:
         Input("h_mortgage_mode", "value"),
         Input("h_data_quality_flags", "value"),
         Input("h_top_n", "value"),
+        Input("tabs", "data"),
     )
     def _update_heatmap(
         source: str,
@@ -2040,7 +2064,9 @@ def create_app() -> Dash:
         mortgage_mode: str,
         data_quality_flags: list[str],
         top_n: int,
+        active_tab: str | None,
     ):
+        _skip_unless_tab(active_tab, "tab_heatmap")
         if source == "matrix_crimea":
             matrix_path = _crimea_matrix_path()
             filtered = _filter_heatmap_deals(
@@ -2137,6 +2163,7 @@ def create_app() -> Dash:
         Input("h_data_quality_flags", "value"),
         Input("h_spike_window", "value"),
         Input("h_spike_baseline_type", "value"),
+        Input("tabs", "data"),
     )
     def _update_developer_spikes(
         h_source: str,
@@ -2153,7 +2180,9 @@ def create_app() -> Dash:
         data_quality_flags: list[str],
         spike_window: int,
         baseline_type: str,
+        active_tab: str | None,
     ):
+        _skip_unless_tab(active_tab, "tab_heatmap")
         window = _dash_int(spike_window, 3)
         if window not in (3, 6, 12):
             window = 3
@@ -2314,6 +2343,7 @@ def create_app() -> Dash:
         Input("h_spike_window", "value"),
         Input("h_spike_baseline_type", "value"),
         Input("h_object_exclude", "value"),
+        Input("tabs", "data"),
     )
     def _update_object_spikes(
         h_source: str,
@@ -2331,7 +2361,9 @@ def create_app() -> Dash:
         spike_window: int,
         baseline_type: str,
         object_exclude: list[str],
+        active_tab: str | None,
     ):
+        _skip_unless_tab(active_tab, "tab_heatmap")
         window = _dash_int(spike_window, 3)
         if window not in (3, 6, 12):
             window = 3
@@ -2492,6 +2524,7 @@ def create_app() -> Dash:
         Input("h_type_lot", "value"),
         Input("h_mortgage_mode", "value"),
         Input("h_data_quality_flags", "value"),
+        Input("tabs", "data"),
         State("h_object_exclude", "value"),
     )
     def _update_object_exclude_options(
@@ -2507,8 +2540,10 @@ def create_app() -> Dash:
         type_lot_sel: list[str],
         mortgage_mode: str,
         data_quality_flags: list[str],
+        active_tab: str | None,
         selected: list[str],
     ):
+        _skip_unless_tab(active_tab, "tab_heatmap")
         if h_source == "matrix_crimea":
             return [], []
         dff = _filter_heatmap_deals(
@@ -3114,6 +3149,7 @@ def create_app() -> Dash:
         Input("pg_year", "value"),
         Input("pg_date_from", "date"),
         Input("pg_date_to", "date"),
+        Input("tabs", "data"),
     )
     def _project_growth_dimension_options(
         deals_source: str,
@@ -3121,7 +3157,9 @@ def create_app() -> Dash:
         year: int | None,
         date_from: str | None,
         date_to: str | None,
+        active_tab: str | None,
     ):
+        _skip_unless_tab(active_tab, "tab_project_growth")
         cities, districts, types = project_growth_dimension_options(
             df,
             deals_source=deals_source,
@@ -3152,6 +3190,7 @@ def create_app() -> Dash:
         Input("pg_type_lot", "value"),
         Input("pg_mortgage_mode", "value"),
         Input("pg_data_quality_flags", "value"),
+        Input("tabs", "data"),
     )
     def _update_project_growth_tab(
         deals_source: str,
@@ -3164,7 +3203,9 @@ def create_app() -> Dash:
         type_lot_sel: list[str],
         mortgage_mode: str,
         data_quality_flags: list[str],
+        active_tab: str | None,
     ):
+        _skip_unless_tab(active_tab, "tab_project_growth")
         dff = filter_project_growth_deals(
             df,
             deals_source=deals_source,

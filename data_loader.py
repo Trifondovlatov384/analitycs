@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import csv
+import hashlib
 import os
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -10,8 +13,46 @@ import polars as pl
 CRIMEA_PATH_DEFAULT = "june2026.csv"
 MAIN_DATA_DEFAULT = "june2026.csv"
 ANALYTIC_PATH_DEFAULT = "Analitic.csv"
+KK2026_PATH_DEFAULT = "KK2026.csv"
 # Newer bnMAP exports first; only one is loaded unless BNMAP_EXPORT_PATHS is set.
 BNMAP_EXPORT_CANDIDATES = ("june2026.csv", "may2026.csv")
+
+CACHE_DIR = Path(__file__).resolve().parent / "data" / "cache"
+COMBINED_CACHE_PATH = CACHE_DIR / "combined_deals.parquet"
+COMBINED_CACHE_META_PATH = CACHE_DIR / "combined_deals.meta"
+
+BNMAP_USE_COLS = (
+    "Проект",
+    "Город",
+    "Район",
+    "Девелопер",
+    "Тип объекта",
+    "Дата договора",
+    "Тип ипотеки",
+    "Тип сделки",
+    "Цена за кв. метр",
+    "Расчетный бюджет объекта",
+    "Площадь согласно ПД",
+    "Площадь согласно ЕГРН",
+    "Этаж",
+    "Количество комнат",
+    "Локация",
+    "Участие объекта в оптовой сделке",
+)
+
+ANALYTIC_USE_COLS = (
+    "object",
+    "city",
+    "loc_district",
+    "developer",
+    "type_lot",
+    "date_sold",
+    "ipoteka",
+    "est_budget",
+    "price_square_r",
+    "do_square",
+    "deal_status",
+)
 
 ANAPA_CITIES = {
     "Варваровка с.",
@@ -75,8 +116,79 @@ def resolve_bnmap_export_paths() -> list[str]:
 
 
 def _csv_has_bnmap_columns(path: str) -> bool:
-    cols = set(pl.read_csv(path, n_rows=0, ignore_errors=True).columns)
-    return "Проект" in cols and "Дата договора" in cols and "Тип ипотеки" in cols
+    with open(path, encoding="utf-8", errors="replace") as f:
+        header = f.readline()
+    return "Проект" in header and "Дата договора" in header and "Тип ипотеки" in header
+
+
+def _csv_header_columns(path: str) -> set[str]:
+    with open(path, encoding="utf-8", errors="replace") as f:
+        row = next(csv.reader(f), [])
+    return {str(c).strip() for c in row if c}
+
+
+def _fingerprint_paths(paths: list[str]) -> str:
+    parts: list[str] = []
+    for path in sorted(paths):
+        p = Path(path)
+        if not p.exists():
+            continue
+        st = p.stat()
+        parts.append(f"{os.path.abspath(path)}:{st.st_mtime_ns}:{st.st_size}")
+    if not parts:
+        return "no-sources"
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()
+
+
+def _collect_source_paths() -> list[str]:
+    paths: list[str] = []
+    paths.extend(resolve_bnmap_export_paths())
+    analitic_path = resolve_analitic_path()
+    if Path(analitic_path).exists():
+        paths.append(analitic_path)
+    kk2026_path = resolve_kk2026_path()
+    if kk2026_path:
+        paths.append(kk2026_path)
+    crimea_path = resolve_crimea_path()
+    if Path(crimea_path).exists():
+        paths.append(crimea_path)
+
+    out: list[str] = []
+    for path in paths:
+        if Path(path).exists() and not any(paths_point_to_same_file(path, seen) for seen in out):
+            out.append(path)
+    return out
+
+
+def _read_combined_cache() -> pl.DataFrame | None:
+    if not COMBINED_CACHE_PATH.exists() or not COMBINED_CACHE_META_PATH.exists():
+        return None
+    try:
+        expected = COMBINED_CACHE_META_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if expected != _fingerprint_paths(_collect_source_paths()):
+        return None
+    try:
+        return pl.read_parquet(COMBINED_CACHE_PATH)
+    except Exception:
+        return None
+
+
+def _write_combined_cache(df: pl.DataFrame, fingerprint: str) -> None:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    df.write_parquet(COMBINED_CACHE_PATH, compression="zstd")
+    COMBINED_CACHE_META_PATH.write_text(fingerprint, encoding="utf-8")
+
+
+def build_combined_deals_cache() -> pl.DataFrame:
+    """Force-rebuild parquet cache (for local scripts / CI)."""
+    load_combined_deals.cache_clear()
+    if COMBINED_CACHE_PATH.exists():
+        COMBINED_CACHE_PATH.unlink(missing_ok=True)
+    if COMBINED_CACHE_META_PATH.exists():
+        COMBINED_CACHE_META_PATH.unlink(missing_ok=True)
+    return load_combined_deals()
 
 
 def paths_point_to_same_file(a: str, b: str) -> bool:
@@ -105,8 +217,22 @@ def resolve_analitic_path() -> str:
     return ANALYTIC_PATH_DEFAULT
 
 
-def load_combined_deals() -> pl.DataFrame:
-    """Load bnMAP exports (june2026 / may2026), Analitic, and optional Crimea with source tags."""
+def resolve_kk2026_path() -> str | None:
+    env_path = os.environ.get("KK2026_PATH")
+    if env_path:
+        return env_path if Path(env_path).exists() else None
+    candidates = (
+        KK2026_PATH_DEFAULT,
+        str(Path.home() / "Downloads" / "KK2026.csv"),
+    )
+    for path in candidates:
+        if Path(path).exists():
+            return path
+    return None
+
+
+def _load_combined_deals_from_csv() -> pl.DataFrame:
+    """Load bnMAP exports, Analitic, KK2026 (Краснодарский край), and optional Crimea."""
     frames: list[pl.DataFrame] = []
     bnmap_paths = resolve_bnmap_export_paths()
     analitic_path = resolve_analitic_path()
@@ -128,6 +254,15 @@ def load_combined_deals() -> pl.DataFrame:
             load_deals(DataConfig(data_path=analitic_path)).with_columns(pl.lit("analitic").alias("source"))
         )
 
+    kk2026_path = resolve_kk2026_path()
+    if kk2026_path and not any(paths_point_to_same_file(kk2026_path, p) for p in loaded_paths):
+        same_as_analitic = paths_point_to_same_file(kk2026_path, analitic_path)
+        if not same_as_analitic:
+            frames.append(
+                load_deals(DataConfig(data_path=kk2026_path)).with_columns(pl.lit("kk2026").alias("source"))
+            )
+            loaded_paths.append(kk2026_path)
+
     if Path(crimea_path).exists():
         same_as_loaded = any(paths_point_to_same_file(crimea_path, p) for p in loaded_paths)
         same_as_analitic = paths_point_to_same_file(crimea_path, analitic_path)
@@ -145,6 +280,26 @@ def load_combined_deals() -> pl.DataFrame:
     return pl.concat(frames, how="diagonal")
 
 
+@lru_cache(maxsize=1)
+def load_combined_deals() -> pl.DataFrame:
+    source_paths = _collect_source_paths()
+    fingerprint = _fingerprint_paths(source_paths)
+
+    cached = _read_combined_cache()
+    if cached is not None:
+        return cached
+
+    if not source_paths:
+        if COMBINED_CACHE_PATH.exists():
+            return pl.read_parquet(COMBINED_CACHE_PATH)
+        return pl.DataFrame()
+
+    df = _load_combined_deals_from_csv()
+    if not df.is_empty():
+        _write_combined_cache(df, fingerprint)
+    return df
+
+
 def load_deals(cfg: Optional[DataConfig] = None) -> pl.DataFrame:
     cfg = cfg or DataConfig(data_path=resolve_data_path())
 
@@ -153,6 +308,7 @@ def load_deals(cfg: Optional[DataConfig] = None) -> pl.DataFrame:
 
     df = pl.read_csv(
         cfg.data_path,
+        columns=[c for c in ANALYTIC_USE_COLS if c in _csv_header_columns(cfg.data_path)] or None,
         try_parse_dates=False,
         ignore_errors=True,
     )
@@ -227,7 +383,14 @@ def load_bnmap_deals(path: str, *, force_crimea_agglomeration: bool) -> pl.DataF
     bnMAP export (Russian column names) -> same schema as legacy `load_deals()` / Crimea loader.
     Dates: DD.MM.YYYY in «Дата договора».
     """
-    df = pl.read_csv(path, try_parse_dates=False, ignore_errors=True)
+    header = _csv_header_columns(path)
+    use_cols = [c for c in BNMAP_USE_COLS if c in header]
+    df = pl.read_csv(
+        path,
+        columns=use_cols or None,
+        try_parse_dates=False,
+        ignore_errors=True,
+    )
 
     is_crimea_loc = (
         pl.col("Локация").cast(pl.Utf8).fill_null("").str.contains("Крым")
