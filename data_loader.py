@@ -160,8 +160,32 @@ def _collect_source_paths() -> list[str]:
     return out
 
 
+def _is_serverless_runtime() -> bool:
+    return bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+
+
+def _can_write_cache() -> bool:
+    if _is_serverless_runtime():
+        return False
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        return True
+    except OSError:
+        return False
+
+
 def _read_combined_cache() -> pl.DataFrame | None:
-    if not COMBINED_CACHE_PATH.exists() or not COMBINED_CACHE_META_PATH.exists():
+    if not COMBINED_CACHE_PATH.exists():
+        return None
+
+    # Vercel/Lambda: read-only FS — use bundled parquet, never rebuild at runtime.
+    if _is_serverless_runtime():
+        try:
+            return pl.read_parquet(COMBINED_CACHE_PATH)
+        except Exception:
+            return None
+
+    if not COMBINED_CACHE_META_PATH.exists():
         return None
     try:
         expected = COMBINED_CACHE_META_PATH.read_text(encoding="utf-8").strip()
@@ -176,6 +200,8 @@ def _read_combined_cache() -> pl.DataFrame | None:
 
 
 def _write_combined_cache(df: pl.DataFrame, fingerprint: str) -> None:
+    if not _can_write_cache():
+        return
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     df.write_parquet(COMBINED_CACHE_PATH, compression="zstd")
     COMBINED_CACHE_META_PATH.write_text(fingerprint, encoding="utf-8")
@@ -295,7 +321,7 @@ def load_combined_deals() -> pl.DataFrame:
         return pl.DataFrame()
 
     df = _load_combined_deals_from_csv()
-    if not df.is_empty():
+    if not df.is_empty() and _can_write_cache():
         _write_combined_cache(df, fingerprint)
     return df
 
