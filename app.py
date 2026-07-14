@@ -142,6 +142,19 @@ def _parse_dash_date(value: object) -> date | None:
         return None
 
 
+def _parse_budget_mln(value: object) -> float | None:
+    """UI stores budget limits in млн ₽ → convert to rubles."""
+    if value is None or value == "":
+        return None
+    try:
+        mln = float(str(value).replace(",", ".").replace(" ", ""))
+    except (TypeError, ValueError):
+        return None
+    if mln < 0:
+        return None
+    return mln * 1_000_000.0
+
+
 def _period_years(year: object, date_from: object, date_to: object) -> list[int] | None:
     if _parse_dash_date(date_from) is not None or _parse_dash_date(date_to) is not None:
         return None
@@ -455,11 +468,15 @@ def _filter_heatmap_deals(
     date_from: object = None,
     date_to: object = None,
     months_sel: object = None,
+    budget_min: object = None,
+    budget_max: object = None,
 ) -> pl.DataFrame:
     flags = set(_normalize_multi_str(data_quality_flags))
     dff = _filter_by_deals_source(dff, deals_source)
     d0 = _parse_dash_date(date_from)
     d1 = _parse_dash_date(date_to)
+    bmin = _parse_budget_mln(budget_min)
+    bmax = _parse_budget_mln(budget_max)
     if d0 is not None:
         dff = dff.filter(pl_col("sold_date") >= d0)
     if d1 is not None:
@@ -487,6 +504,8 @@ def _filter_heatmap_deals(
         type_lots=_normalize_multi_str(type_lot_sel) or None,
         date_from=d0,
         date_to=d1,
+        budget_min=bmin,
+        budget_max=bmax,
     )
     if "exclude_wholesale" in flags and "Участие объекта в оптовой сделке" in filtered.columns:
         filtered = filtered.filter(
@@ -1239,6 +1258,8 @@ def create_app() -> Dash:
         Input("mortgage_mode", "value"),
         Input("developer", "value"),
         Input("type_lot", "value"),
+        Input("budget_min", "value"),
+        Input("budget_max", "value"),
         Input("chart_line_shape", "data"),
     )
     def _update_dashboard(
@@ -1252,6 +1273,8 @@ def create_app() -> Dash:
         mortgage_mode: str,
         developers: list[str],
         type_lots: list[str],
+        budget_min: object,
+        budget_max: object,
         line_shape: str | None,
     ):
         dff = df
@@ -1264,6 +1287,8 @@ def create_app() -> Dash:
         sources = None if (not source or source == "all") else [source]
         d0 = _parse_dash_date(date_from)
         d1 = _parse_dash_date(date_to)
+        bmin = _parse_budget_mln(budget_min)
+        bmax = _parse_budget_mln(budget_max)
         shape = line_shape if line_shape in ("linear", "spline") else "linear"
 
         base_filtered = apply_filters(
@@ -1278,6 +1303,8 @@ def create_app() -> Dash:
             type_lots=lot_sel,
             date_from=d0,
             date_to=d1,
+            budget_min=bmin,
+            budget_max=bmax,
         )
 
         filtered_for_kpi = apply_filters(
@@ -1394,6 +1421,8 @@ def create_app() -> Dash:
         Input("c_mortgage_mode", "value"),
         Input("c_type_lot", "value"),
         Input("c_object", "value"),
+        Input("c_budget_min", "value"),
+        Input("c_budget_max", "value"),
         Input("tabs", "data"),
     )
     def _update_complexes_tab(
@@ -1407,6 +1436,8 @@ def create_app() -> Dash:
         mortgage_mode: str,
         type_lots: list[str],
         complex_name: str | None,
+        budget_min: object,
+        budget_max: object,
         active_tab: str | None,
     ):
         _skip_unless_tab(active_tab, "tab_complexes")
@@ -1428,6 +1459,8 @@ def create_app() -> Dash:
             type_lots=type_lots_sel,
             date_from=_parse_dash_date(date_from),
             date_to=_parse_dash_date(date_to),
+            budget_min=_parse_budget_mln(budget_min),
+            budget_max=_parse_budget_mln(budget_max),
         )
 
         city_counts = city_deal_counts(base)
@@ -1509,6 +1542,8 @@ def create_app() -> Dash:
         Input("cmp_mortgage_mode", "value"),
         Input("cmp_type_lot", "value"),
         Input("cmp_selected_complexes", "data"),
+        Input("cmp_budget_min", "value"),
+        Input("cmp_budget_max", "value"),
         Input("tabs", "data"),
     )
     def _update_compare_tab(
@@ -1522,6 +1557,8 @@ def create_app() -> Dash:
         mortgage_mode: str,
         type_lots: list[str],
         selected_complexes: list[str] | None,
+        budget_min: object,
+        budget_max: object,
         active_tab: str | None,
     ):
         _skip_unless_tab(active_tab, "tab_compare")
@@ -1543,6 +1580,8 @@ def create_app() -> Dash:
             type_lots=type_lots_sel,
             date_from=_parse_dash_date(date_from),
             date_to=_parse_dash_date(date_to),
+            budget_min=_parse_budget_mln(budget_min),
+            budget_max=_parse_budget_mln(budget_max),
         )
 
         cmp_df = complex_comparison_metrics(base).filter(
@@ -2047,6 +2086,8 @@ def create_app() -> Dash:
         Input("h_type_lot", "value"),
         Input("h_mortgage_mode", "value"),
         Input("h_data_quality_flags", "value"),
+        Input("h_budget_min", "value"),
+        Input("h_budget_max", "value"),
         Input("h_top_n", "value"),
         Input("tabs", "data"),
     )
@@ -2063,6 +2104,8 @@ def create_app() -> Dash:
         type_lot_sel: list[str],
         mortgage_mode: str,
         data_quality_flags: list[str],
+        budget_min: object,
+        budget_max: object,
         top_n: int,
         active_tab: str | None,
     ):
@@ -2082,6 +2125,8 @@ def create_app() -> Dash:
                 date_from=date_from,
                 date_to=date_to,
                 months_sel=months_sel,
+                budget_min=budget_min,
+                budget_max=budget_max,
             )
 
             if matrix_path:
@@ -2138,6 +2183,8 @@ def create_app() -> Dash:
             date_from=date_from,
             date_to=date_to,
             months_sel=months_sel,
+            budget_min=budget_min,
+            budget_max=budget_max,
         )
 
         if filtered.is_empty():
@@ -2161,6 +2208,8 @@ def create_app() -> Dash:
         Input("h_type_lot", "value"),
         Input("h_mortgage_mode", "value"),
         Input("h_data_quality_flags", "value"),
+        Input("h_budget_min", "value"),
+        Input("h_budget_max", "value"),
         Input("h_spike_window", "value"),
         Input("h_spike_baseline_type", "value"),
         Input("tabs", "data"),
@@ -2178,6 +2227,8 @@ def create_app() -> Dash:
         type_lot_sel: list[str],
         mortgage_mode: str,
         data_quality_flags: list[str],
+        budget_min: object,
+        budget_max: object,
         spike_window: int,
         baseline_type: str,
         active_tab: str | None,
@@ -2208,6 +2259,8 @@ def create_app() -> Dash:
             date_from=date_from,
             date_to=date_to,
             months_sel=months_sel,
+            budget_min=budget_min,
+            budget_max=budget_max,
         )
         dff = dff.filter(pl.col("developer").is_not_null() & (pl.col("developer") != "") & pl.col("sold_month").is_not_null())
         if dff.is_empty():
@@ -2340,6 +2393,8 @@ def create_app() -> Dash:
         Input("h_type_lot", "value"),
         Input("h_mortgage_mode", "value"),
         Input("h_data_quality_flags", "value"),
+        Input("h_budget_min", "value"),
+        Input("h_budget_max", "value"),
         Input("h_spike_window", "value"),
         Input("h_spike_baseline_type", "value"),
         Input("h_object_exclude", "value"),
@@ -2358,6 +2413,8 @@ def create_app() -> Dash:
         type_lot_sel: list[str],
         mortgage_mode: str,
         data_quality_flags: list[str],
+        budget_min: object,
+        budget_max: object,
         spike_window: int,
         baseline_type: str,
         object_exclude: list[str],
@@ -2389,6 +2446,8 @@ def create_app() -> Dash:
             date_from=date_from,
             date_to=date_to,
             months_sel=months_sel,
+            budget_min=budget_min,
+            budget_max=budget_max,
         )
         dff = dff.filter(pl.col("object").is_not_null() & (pl.col("object") != "") & pl.col("sold_month").is_not_null())
         excluded = set(_normalize_multi_str(object_exclude))
@@ -2524,6 +2583,8 @@ def create_app() -> Dash:
         Input("h_type_lot", "value"),
         Input("h_mortgage_mode", "value"),
         Input("h_data_quality_flags", "value"),
+        Input("h_budget_min", "value"),
+        Input("h_budget_max", "value"),
         Input("tabs", "data"),
         State("h_object_exclude", "value"),
     )
@@ -2540,6 +2601,8 @@ def create_app() -> Dash:
         type_lot_sel: list[str],
         mortgage_mode: str,
         data_quality_flags: list[str],
+        budget_min: object,
+        budget_max: object,
         active_tab: str | None,
         selected: list[str],
     ):
@@ -2559,6 +2622,8 @@ def create_app() -> Dash:
             date_from=date_from,
             date_to=date_to,
             months_sel=months_sel,
+            budget_min=budget_min,
+            budget_max=budget_max,
         )
         objs = (
             dff.filter(pl.col("object").is_not_null() & (pl.col("object") != ""))
@@ -2588,6 +2653,8 @@ def create_app() -> Dash:
         Input("h_type_lot", "value"),
         Input("h_mortgage_mode", "value"),
         Input("h_data_quality_flags", "value"),
+        Input("h_budget_min", "value"),
+        Input("h_budget_max", "value"),
     )
     def _heatmap_cell_details(
         click_data: dict | None,
@@ -2603,6 +2670,8 @@ def create_app() -> Dash:
         type_lot_sel: list[str],
         mortgage_mode: str,
         data_quality_flags: list[str],
+        budget_min: object,
+        budget_max: object,
     ):
         if not click_data or "points" not in click_data or not click_data["points"]:
             return "Кликните по ячейке, чтобы увидеть сделки.", ""
@@ -2659,6 +2728,8 @@ def create_app() -> Dash:
             date_from=date_from,
             date_to=date_to,
             months_sel=months_sel,
+            budget_min=budget_min,
+            budget_max=budget_max,
         )
 
         dff = dff.filter((pl_col("object") == obj) & (pl_col("sold_month") == month))
@@ -3190,6 +3261,8 @@ def create_app() -> Dash:
         Input("pg_type_lot", "value"),
         Input("pg_mortgage_mode", "value"),
         Input("pg_data_quality_flags", "value"),
+        Input("pg_budget_min", "value"),
+        Input("pg_budget_max", "value"),
         Input("tabs", "data"),
     )
     def _update_project_growth_tab(
@@ -3203,6 +3276,8 @@ def create_app() -> Dash:
         type_lot_sel: list[str],
         mortgage_mode: str,
         data_quality_flags: list[str],
+        budget_min: object,
+        budget_max: object,
         active_tab: str | None,
     ):
         _skip_unless_tab(active_tab, "tab_project_growth")
@@ -3218,6 +3293,8 @@ def create_app() -> Dash:
             data_quality_flags=data_quality_flags,
             date_from=_parse_dash_date(date_from),
             date_to=_parse_dash_date(date_to),
+            budget_min=_parse_budget_mln(budget_min),
+            budget_max=_parse_budget_mln(budget_max),
         )
 
         empty = go.Figure()

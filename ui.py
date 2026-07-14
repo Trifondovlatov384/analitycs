@@ -6,6 +6,7 @@ import dash_bootstrap_components as dbc
 from ui_components import (
     ALL_TAB_IDS,
     app_shell,
+    budget_filter_block,
     chart_card,
     kpi_card,
     period_filter_block,
@@ -46,6 +47,10 @@ def layout(*, matrix_available: bool = False) -> html.Div:
                                         date_to_id="date_to",
                                         year_id="year",
                                         months_id="months",
+                                    ),
+                                    *budget_filter_block(
+                                        budget_min_id="budget_min",
+                                        budget_max_id="budget_max",
                                     ),
                                     dbc.Label("Город", className="mt-2"),
                                     dcc.Dropdown(
@@ -193,6 +198,10 @@ def layout(*, matrix_available: bool = False) -> html.Div:
                                         year_id="c_year",
                                         months_id="c_months",
                                     ),
+                                    *budget_filter_block(
+                                        budget_min_id="c_budget_min",
+                                        budget_max_id="c_budget_max",
+                                    ),
                                     dbc.Label("Город", className="mt-3"),
                                     dcc.Dropdown(id="c_city", options=[], value=[], multi=True),
                                     dbc.Label("Ипотека", className="mt-3"),
@@ -319,6 +328,10 @@ def layout(*, matrix_available: bool = False) -> html.Div:
                                         date_to_id="cmp_date_to",
                                         year_id="cmp_year",
                                         months_id="cmp_months",
+                                    ),
+                                    *budget_filter_block(
+                                        budget_min_id="cmp_budget_min",
+                                        budget_max_id="cmp_budget_max",
                                     ),
                                     dbc.Label("Город", className="mt-3"),
                                     dcc.Dropdown(id="cmp_city", options=[], value=[], multi=True),
@@ -463,6 +476,10 @@ def layout(*, matrix_available: bool = False) -> html.Div:
                                         date_to_id="h_date_to",
                                         year_id="h_year",
                                         months_id="h_months",
+                                    ),
+                                    *budget_filter_block(
+                                        budget_min_id="h_budget_min",
+                                        budget_max_id="h_budget_max",
                                     ),
                                     dbc.Label("Город", className="mt-2"),
                                     dcc.Dropdown(
@@ -1103,6 +1120,10 @@ def layout(*, matrix_available: bool = False) -> html.Div:
                                         date_to_id="pg_date_to",
                                         year_id="pg_year",
                                         months_id="pg_months",
+                                    ),
+                                    *budget_filter_block(
+                                        budget_min_id="pg_budget_min",
+                                        budget_max_id="pg_budget_max",
                                     ),
                                     dbc.Label("Город", className="mt-2"),
                                     dcc.Dropdown(id="pg_city", options=[], value=[], multi=True),

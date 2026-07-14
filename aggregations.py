@@ -18,6 +18,8 @@ def apply_filters(
     type_lots: list[str] | None,
     date_from: date | None = None,
     date_to: date | None = None,
+    budget_min: float | None = None,
+    budget_max: float | None = None,
 ) -> pl.DataFrame:
     out = df
 
@@ -51,6 +53,13 @@ def apply_filters(
 
     if type_lots:
         out = out.filter(pl.col("type_lot").is_in(type_lots))
+
+    if budget_min is not None or budget_max is not None:
+        out = out.filter(pl.col("est_budget").is_not_null())
+        if budget_min is not None:
+            out = out.filter(pl.col("est_budget") >= budget_min)
+        if budget_max is not None:
+            out = out.filter(pl.col("est_budget") <= budget_max)
 
     return out
 

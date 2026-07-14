@@ -47,6 +47,8 @@ def filter_project_growth_deals(
     data_quality_flags: object = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    budget_min: float | None = None,
+    budget_max: float | None = None,
 ) -> pl.DataFrame:
     flags = set(_normalize_multi_str(data_quality_flags))
     dff = df
@@ -80,6 +82,8 @@ def filter_project_growth_deals(
         type_lots=_normalize_multi_str(type_lot_sel) or None,
         date_from=date_from,
         date_to=date_to,
+        budget_min=budget_min,
+        budget_max=budget_max,
     )
 
     if "exclude_wholesale" in flags and "Участие объекта в оптовой сделке" in filtered.columns:

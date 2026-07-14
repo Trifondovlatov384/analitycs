@@ -131,6 +131,49 @@ def source_filter_block(dropdown_id: str) -> html.Div:
     )
 
 
+def budget_filter_block(
+    *,
+    budget_min_id: str,
+    budget_max_id: str,
+) -> list:
+    """Budget filters in млн ₽. Empty = no limit. Example: до 10 → сделки ≤ 10 млн."""
+    return [
+        html.Div("Бюджет лота, млн ₽", className="filter-section-title mt-3"),
+        dbc.Row(
+            [
+                dbc.Col(
+                    [
+                        dbc.Label("От", className="small text-muted"),
+                        dbc.Input(
+                            id=budget_min_id,
+                            type="number",
+                            min=0,
+                            step=0.5,
+                            placeholder="без мин.",
+                        ),
+                    ],
+                    md=6,
+                ),
+                dbc.Col(
+                    [
+                        dbc.Label("До", className="small text-muted"),
+                        dbc.Input(
+                            id=budget_max_id,
+                            type="number",
+                            min=0,
+                            step=0.5,
+                            placeholder="напр. 10",
+                        ),
+                    ],
+                    md=6,
+                ),
+            ],
+            className="g-2",
+        ),
+        html.Div("Например: «до 10» — сделки до 10 млн ₽", className="form-hint"),
+    ]
+
+
 def app_shell(children: list, *, matrix_available: bool) -> html.Div:
     tab_buttons = [
         html.Button(
