@@ -10,12 +10,12 @@ from typing import Iterable, Optional
 
 import polars as pl
 
-CRIMEA_PATH_DEFAULT = "june2026.csv"
-MAIN_DATA_DEFAULT = "june2026.csv"
+CRIMEA_PATH_DEFAULT = "july2026.csv"
+MAIN_DATA_DEFAULT = "july2026.csv"
 ANALYTIC_PATH_DEFAULT = "Analitic.csv"
 KK2026_PATH_DEFAULT = "KK2026.csv"
 # Newer bnMAP exports first; only one is loaded unless BNMAP_EXPORT_PATHS is set.
-BNMAP_EXPORT_CANDIDATES = ("june2026.csv", "may2026.csv")
+BNMAP_EXPORT_CANDIDATES = ("july2026.csv", "june2026.csv", "may2026.csv")
 
 CACHE_DIR = Path(__file__).resolve().parent / "data" / "cache"
 COMBINED_CACHE_PATH = CACHE_DIR / "combined_deals.parquet"
@@ -93,7 +93,7 @@ def _source_tag_for_path(path: str) -> str:
 
 def resolve_bnmap_export_paths() -> list[str]:
     """
-    bnMAP CSV paths to load. By default picks the newest available export (june2026 > may2026).
+    bnMAP CSV paths to load. By default picks the newest available export (july2026 > june2026 > may2026).
     Set BNMAP_EXPORT_PATHS=comma,separated,paths to load several files (e.g. for comparison).
     """
     explicit = os.environ.get("BNMAP_EXPORT_PATHS")
@@ -477,6 +477,7 @@ def load_bnmap_deals(path: str, *, force_crimea_agglomeration: bool) -> pl.DataF
         [
             pl.col("date_sold_raw")
             .str.strptime(pl.Date, format="%d.%m.%Y", strict=False)
+            .fill_null(pl.col("date_sold_raw").str.strptime(pl.Date, format="%Y-%m-%d", strict=False))
             .alias("sold_date"),
         ]
     )

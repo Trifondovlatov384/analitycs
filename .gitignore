@@ -4,3 +4,7 @@ __pycache__/
 .DS_Store
 Реестр (общедоступные сведения).csv
 .vercel
+july2026.csv
+june2026.csv
+may2026.csv
+*.xlsx
