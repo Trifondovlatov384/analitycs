@@ -1176,6 +1176,8 @@ def create_app() -> Dash:
         Output("city", "value"),
         Output("developer", "options"),
         Output("developer", "value"),
+        Output("project", "options"),
+        Output("project", "value"),
         Output("type_lot", "options"),
         Output("type_lot", "value"),
         Output("months", "options"),
@@ -1187,6 +1189,7 @@ def create_app() -> Dash:
         Input("date_to", "date"),
         State("city", "value"),
         State("developer", "value"),
+        State("project", "value"),
         State("type_lot", "value"),
         State("months", "value"),
     )
@@ -1198,6 +1201,7 @@ def create_app() -> Dash:
         date_to: str | None,
         city_selected: list[str],
         developer_selected: list[str],
+        project_selected: list[str],
         type_lot_selected: list[str],
         months_selected: list[str],
     ):
@@ -1219,13 +1223,21 @@ def create_app() -> Dash:
         lots = list_sorted(dff.select("type_lot").unique().to_series().to_list())
         months = list_sorted(dff.select("sold_month").unique().to_series().to_list())
 
+        projects_df = dff
+        selected_devs = _normalize_multi_str(developer_selected)
+        if selected_devs:
+            projects_df = projects_df.filter(pl_col("developer").is_in(selected_devs))
+        projects = list_sorted(projects_df.select("object").unique().to_series().to_list())
+
         cities_set = set(cities)
         devs_set = set(devs)
+        projects_set = set(projects)
         lots_set = set(lots)
         months_set = set(months)
 
         city_selected = [c for c in (city_selected or []) if c in cities_set]
         developer_selected = [d for d in (developer_selected or []) if d in devs_set]
+        project_selected = [p for p in (project_selected or []) if p in projects_set]
         type_lot_selected = [t for t in (type_lot_selected or []) if t in lots_set]
         months_selected = [m for m in (months_selected or []) if m in months_set]
 
@@ -1234,11 +1246,47 @@ def create_app() -> Dash:
             city_selected,
             [{"label": d, "value": d} for d in devs],
             developer_selected,
+            [{"label": p, "value": p} for p in projects],
+            project_selected,
             [{"label": t, "value": t} for t in lots],
             type_lot_selected,
             [{"label": m, "value": m} for m in months],
             months_selected,
         )
+
+    @app.callback(
+        Output("project", "options", allow_duplicate=True),
+        Output("project", "value", allow_duplicate=True),
+        Input("developer", "value"),
+        Input("source", "value"),
+        Input("agglomeration", "value"),
+        Input("year", "value"),
+        Input("date_from", "date"),
+        Input("date_to", "date"),
+        State("project", "value"),
+        prevent_initial_call=True,
+    )
+    def _refresh_project_options_by_developer(
+        developers: list[str],
+        source: str,
+        agglomeration: str,
+        year: int | None,
+        date_from: str | None,
+        date_to: str | None,
+        project_selected: list[str],
+    ):
+        dff = df
+        dff = _filter_by_deals_source(dff, source or "all")
+        dff = _slice_by_period(dff, year, date_from, date_to)
+        if agglomeration and agglomeration != "all":
+            dff = dff.filter(pl_col("agglomeration") == agglomeration)
+        selected_devs = _normalize_multi_str(developers)
+        if selected_devs:
+            dff = dff.filter(pl_col("developer").is_in(selected_devs))
+        projects = list_sorted(dff.select("object").unique().to_series().to_list())
+        projects_set = set(projects)
+        project_selected = [p for p in (project_selected or []) if p in projects_set]
+        return [{"label": p, "value": p} for p in projects], project_selected
 
     @app.callback(
         Output("kpi_total_deals", "children"),
@@ -1257,6 +1305,7 @@ def create_app() -> Dash:
         Input("city", "value"),
         Input("mortgage_mode", "value"),
         Input("developer", "value"),
+        Input("project", "value"),
         Input("type_lot", "value"),
         Input("budget_min", "value"),
         Input("budget_max", "value"),
@@ -1272,6 +1321,7 @@ def create_app() -> Dash:
         cities: list[str],
         mortgage_mode: str,
         developers: list[str],
+        projects: list[str],
         type_lots: list[str],
         budget_min: object,
         budget_max: object,
@@ -1283,6 +1333,7 @@ def create_app() -> Dash:
         months_sel = months or None
         cities_sel = cities or None
         dev_sel = developers or None
+        project_sel = _normalize_multi_str(projects) or None
         lot_sel = type_lots or None
         sources = None if (not source or source == "all") else [source]
         d0 = _parse_dash_date(date_from)
@@ -1305,6 +1356,7 @@ def create_app() -> Dash:
             date_to=d1,
             budget_min=bmin,
             budget_max=bmax,
+            objects=project_sel,
         )
 
         filtered_for_kpi = apply_filters(

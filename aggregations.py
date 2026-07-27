@@ -20,6 +20,7 @@ def apply_filters(
     date_to: date | None = None,
     budget_min: float | None = None,
     budget_max: float | None = None,
+    objects: list[str] | None = None,
 ) -> pl.DataFrame:
     out = df
 
@@ -50,6 +51,9 @@ def apply_filters(
 
     if developers:
         out = out.filter(pl.col("developer").is_in(developers))
+
+    if objects:
+        out = out.filter(pl.col("object").is_in(objects))
 
     if type_lots:
         out = out.filter(pl.col("type_lot").is_in(type_lots))

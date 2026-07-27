@@ -79,6 +79,14 @@ def layout(*, matrix_available: bool = False) -> html.Div:
                                         multi=True,
                                         placeholder="Выберите застройщика(ов)…",
                                     ),
+                                    dbc.Label("Проект", className="mt-3"),
+                                    dcc.Dropdown(
+                                        id="project",
+                                        options=[],
+                                        value=[],
+                                        multi=True,
+                                        placeholder="Выберите проект(ы)…",
+                                    ),
                                     dbc.Label("Тип недвижимости", className="mt-3"),
                                     dcc.Dropdown(
                                         id="type_lot",
