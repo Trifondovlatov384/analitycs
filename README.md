@@ -1,6 +1,6 @@
 # Deals dashboard (local)
 
-Локальный интерактивный дашборд по сделкам из `july2026.csv` (экспорт bnMAP по Крыму; при необходимости можно подставить свой CSV).
+Локальный интерактивный дашборд по сделкам из `august2026.csv` (экспорт bnMAP по Крыму; при необходимости можно подставить свой CSV).
 
 ## Запуск
 
@@ -41,7 +41,7 @@ python app.py
 
 По умолчанию подгружаются все доступные CSV в папке проекта:
 
-- `july2026.csv` / `june2026.csv` / `may2026.csv` — bnMAP по Крыму (берётся более новый файл, сейчас **july2026** с данными до июня 2026)
+- `august2026.csv` / `july2026.csv` / … — bnMAP по Крыму (берётся более новый файл, сейчас **august2026** с данными до июля 2026)
 - `Analitic.csv` — источник **Analitic** (Анапа, Сочи и др. направления)
 - `KK2026.csv` — сделки **2026** по **Краснодарскому краю** (источник **KK2026**)
 - отдельный файл Крыма — источник **Крым**, если путь не совпадает с двумя выше
@@ -49,8 +49,8 @@ python app.py
 Форматы: **bnMAP** (колонки «Проект», «Дата договора», …) и **Analitic** (`object`, `date_sold` YYYY-MM-DD, …) — определяется по заголовку.
 
 ```bash
-DATA_PATH="/полный/путь/к/july2026.csv" python app.py
-BNMAP_EXPORT_PATHS="may2026.csv,july2026.csv" python app.py  # несколько выгрузок bnMAP
+DATA_PATH="/полный/путь/к/august2026.csv" python app.py
+BNMAP_EXPORT_PATHS="july2026.csv,august2026.csv" python app.py  # несколько выгрузок bnMAP
 ANALYTIC_PATH="/полный/путь/к/Analitic.csv" python app.py
 KK2026_PATH="/полный/путь/к/KK2026.csv" python app.py
 CRIMEA_DEALS_PATH="/полный/путь/к/крым.csv" python app.py
