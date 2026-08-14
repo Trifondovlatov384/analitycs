@@ -48,7 +48,12 @@ from ui import layout
 from ui_components import ADMIN_ACCESS_TAB_IDS, ALL_TAB_IDS, PUBLIC_TAB_IDS
 
 ADMIN_ACCESS_KEY = os.environ.get("ADMIN_ACCESS_KEY", "dev-admin-key")
-SOURCE_LABELS = {"analitic": "Analitic", "crimea": "Крым", "kk2026": "KK2026 (Краснодарский край)"}
+SOURCE_LABELS = {
+    "analitic": "Analitic",
+    "crimea": "Крым",
+    "kk2026": "Краснодарский край",
+    "august2026": "Крым (bnMAP)",
+}
 SOURCE_DROPDOWN_IDS = [
     "source",
     "c_source",

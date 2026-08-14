@@ -13,7 +13,8 @@ import polars as pl
 CRIMEA_PATH_DEFAULT = "august2026.csv"
 MAIN_DATA_DEFAULT = "august2026.csv"
 ANALYTIC_PATH_DEFAULT = "Analitic.csv"
-KK2026_PATH_DEFAULT = "KK2026.csv"
+KK2026_PATH_DEFAULT = "kk_august2026.csv"
+KK2026_PATH_FALLBACK = "KK2026.csv"
 # Newer bnMAP exports first; only one is loaded unless BNMAP_EXPORT_PATHS is set.
 BNMAP_EXPORT_CANDIDATES = ("august2026.csv", "july2026.csv", "june2026.csv", "may2026.csv")
 
@@ -249,6 +250,7 @@ def resolve_kk2026_path() -> str | None:
         return env_path if Path(env_path).exists() else None
     candidates = (
         KK2026_PATH_DEFAULT,
+        KK2026_PATH_FALLBACK,
         str(Path.home() / "Downloads" / "KK2026.csv"),
     )
     for path in candidates:
