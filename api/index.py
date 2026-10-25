@@ -93,6 +93,11 @@ def api_heatmap():
     return _json(widgets.heatmap_data(get_deals(), args_from_request(request)))
 
 
+@app.get("/api/heatmap/details")
+def api_heatmap_details():
+    return _json(widgets.heatmap_cell_details(get_deals(), args_from_request(request)))
+
+
 @app.get("/api/euler")
 def api_euler():
     return _json(widgets.euler_data(get_deals(), args_from_request(request)))

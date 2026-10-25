@@ -34,7 +34,7 @@
       object: "",
       district: [],
       selected: [],
-      top_n: 30,
+      top_n: 40,
       line_shape: "linear",
       data_quality: ["exclude_wholesale", "known_budget_only"],
       target_budget: 8000000,
@@ -118,7 +118,7 @@
       putScalar("target_budget", [8000000]);
       putScalar("delta_budget", [3000000]);
     }
-    if (state.tab === "tab_heatmap") putScalar("top_n", [30]);
+    if (state.tab === "tab_heatmap") putScalar("top_n", [40]);
     for (const k of ["months", "city", "developer", "project", "type_lot", "district", "selected", "projects", "region", "work_type"]) {
       if (f[k] && f[k].length) p.set(k, f[k].join(","));
     }
@@ -160,6 +160,7 @@
     put("budget_min", f.budget_min);
     put("budget_max", f.budget_max);
     put("object", f.object);
+    put("month", f.month);
     put("district", f.district);
     put("selected", f.selected);
     put("top_n", f.top_n);
@@ -376,7 +377,7 @@
 
   function renderHeatmap(container, data) {
     container.classList.remove("skeleton", "skeleton-chart");
-    const { display = [], months = [], z = [] } = data;
+    const { objects = [], display = [], months = [], month_keys = [], z = [] } = data;
     if (!months.length || !display.length) {
       container.innerHTML = '<div class="empty">Нет данных</div>';
       return;
@@ -399,12 +400,17 @@
     const head = `<tr><th class="row-label">Объект</th>${months.map((m) => `<th>${escapeHtml(m)}</th>`).join("")}</tr>`;
     const body = display
       .map((name, i) => {
+        const obj = objects[i] || String(name).replace(/\s\(\d+\)$/, "");
         const cells = (z[i] || [])
-          .map((v) => {
+          .map((v, j) => {
             const vv = Number(v) || 0;
-            if (vv <= 0) return `<td class="hm-zero"></td>`;
+            const monthKey = month_keys[j] || months[j];
+            const monthLabel = months[j];
+            if (vv <= 0) {
+              return `<td class="hm-zero" data-object="${escapeHtml(obj)}" data-month="${escapeHtml(monthKey)}" data-month-label="${escapeHtml(monthLabel)}" title="${escapeHtml(obj)} · ${escapeHtml(monthLabel)}"></td>`;
+            }
             const t = Math.max(0, Math.min(1, (vv - zmin) / span));
-            return `<td style="background:${heatmapColor(t)};color:#111">${vv}</td>`;
+            return `<td style="background:${heatmapColor(t)};color:#111" data-object="${escapeHtml(obj)}" data-month="${escapeHtml(monthKey)}" data-month-label="${escapeHtml(monthLabel)}" title="${escapeHtml(obj)} · ${escapeHtml(monthLabel)}: ${vv}">${vv}</td>`;
           })
           .join("");
         return `<tr><th class="row-label" title="${escapeHtml(name)}">${escapeHtml(name)}</th>${cells}</tr>`;
@@ -455,14 +461,13 @@
       .join("");
   }
 
-  function renderFilters() {
+  function commonFilterBlocks() {
     const meta = state.meta || {};
     const dims = state.dims || {};
     const f = state.filters;
     const years = (meta.years || []).map((y) => ({ label: String(y), value: y }));
     const sources = meta.sources?.options || [];
     const showSource = meta.sources?.show !== false && sources.length > 1;
-
     const blocks = [];
     if (showSource) {
       blocks.push(filterSelect("source", "Источник", sources, f.source));
@@ -490,7 +495,38 @@
         { label: "Не ипотека", value: "non_mortgage" },
       ], f.mortgage_mode)
     );
+    return blocks;
+  }
 
+  function renderFilters() {
+    const dims = state.dims || {};
+    const f = state.filters;
+    const topFilters = $("#filters");
+    const sideFilters = $("#heatmap-filters");
+
+    if (state.tab === "tab_heatmap") {
+      topFilters.style.display = "none";
+      topFilters.innerHTML = "";
+      const blocks = commonFilterBlocks();
+      blocks.push(filterMulti("district", "Район", dims.district || [], f.district));
+      blocks.push(filterMulti("type_lot", "Тип объекта", dims.type_lot || [], f.type_lot));
+      const dq = new Set(f.data_quality || []);
+      blocks.push(`<div class="filter"><label>Качество данных</label>
+        <label class="muted" style="display:flex;gap:6px;align-items:center;margin-top:4px">
+          <input type="checkbox" data-quality="exclude_wholesale" ${dq.has("exclude_wholesale") ? "checked" : ""}> Исключать оптовые
+        </label>
+        <label class="muted" style="display:flex;gap:6px;align-items:center;margin-top:4px">
+          <input type="checkbox" data-quality="known_budget_only" ${dq.has("known_budget_only") ? "checked" : ""}> Только с бюджетом
+        </label>
+      </div>`);
+      blocks.push(`<div class="filter"><label>Топ комплексов</label><input type="number" min="10" max="100" step="5" data-filter="top_n" value="${escapeHtml(f.top_n)}"></div>`);
+      blocks.push(`<p class="muted" style="margin:0;font-size:12px">Цветовая шкала обрезает экстремумы (квантили), чтобы середина читалась лучше.</p>`);
+      sideFilters.innerHTML = `<h2 class="widget-title">Фильтры (Теплокарта)</h2><div class="filters-stack">${blocks.join("")}</div>`;
+      return;
+    }
+
+    topFilters.style.display = "";
+    const blocks = commonFilterBlocks();
     if (state.tab === "tab_deals") {
       blocks.push(filterMulti("developer", "Застройщик", dims.developer || [], f.developer));
       blocks.push(filterMulti("project", "Проект", dims.project || [], f.project));
@@ -505,10 +541,6 @@
       blocks.push(filterMulti("projects", "Проекты (до 3)", dims.project || [], f.projects));
       blocks.push(`<div class="filter"><label>Целевой бюджет</label><input type="number" data-filter="target_budget" value="${escapeHtml(f.target_budget)}"></div>`);
       blocks.push(`<div class="filter"><label>Коридор ±</label><input type="number" data-filter="delta_budget" value="${escapeHtml(f.delta_budget)}"></div>`);
-    } else if (state.tab === "tab_heatmap") {
-      blocks.push(filterMulti("district", "Район", dims.district || [], f.district));
-      blocks.push(filterMulti("type_lot", "Тип", dims.type_lot || [], f.type_lot));
-      blocks.push(`<div class="filter"><label>Топ N</label><input type="number" min="5" max="100" data-filter="top_n" value="${escapeHtml(f.top_n)}"></div>`);
     } else if (state.tab === "tab_egrz") {
       blocks.length = 0;
       blocks.push(`<div class="filter filter--grow"><label>Поиск</label><input type="search" data-filter="search" value="${escapeHtml(f.search || "")}" placeholder="Объект, застройщик, РНС…"></div>`);
@@ -519,7 +551,7 @@
       blocks.push(filterMulti("type_lot", "Тип", dims.type_lot || [], f.type_lot));
     }
 
-    $("#filters").innerHTML = blocks.join("");
+    topFilters.innerHTML = blocks.join("");
   }
 
   function filterSelect(name, label, options, value, { emptyLabel = null } = {}) {
@@ -681,10 +713,62 @@
     });
   }
 
+  async function loadHeatmapCellDetails(objectName, monthKey) {
+    const titleEl = $("#heatmap-click-title");
+    const tableEl = $("#heatmap-click-table");
+    if (!titleEl || !tableEl) return;
+    titleEl.textContent = "Загрузка…";
+    tableEl.innerHTML = '<div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line"></div>';
+    try {
+      const q = filterQuery({ object: objectName, month: monthKey });
+      const res = await fetch(`/api/heatmap/details?${q}`, { credentials: "same-origin" });
+      if (res.status === 401) {
+        location.href = `/login?next=${encodeURIComponent(location.pathname + location.search)}`;
+        return;
+      }
+      const d = await res.json();
+      titleEl.textContent = d.title || "Сделки";
+      if (d.message && !(d.rows || []).length) {
+        tableEl.innerHTML = `<div class="empty">${escapeHtml(d.message)}</div>`;
+        return;
+      }
+      renderTable(
+        tableEl,
+        d.rows || [],
+        [
+          { key: "date", label: "Дата" },
+          { key: "budget", label: "Стоимость" },
+          { key: "status", label: "Статус" },
+          { key: "type_lot", label: "Тип объекта" },
+          { key: "source", label: "Регион" },
+          { key: "city", label: "Город" },
+          { key: "district", label: "Район" },
+          { key: "developer", label: "Девелопер" },
+        ],
+        { rowKey: "date" }
+      );
+    } catch (err) {
+      titleEl.textContent = "Не удалось загрузить сделки";
+      tableEl.innerHTML = `<div class="empty">${escapeHtml(err.message || String(err))}</div>`;
+    }
+  }
+
   async function loadHeatmapTab() {
+    const titleEl = $("#heatmap-click-title");
+    const tableEl = $("#heatmap-click-table");
+    if (titleEl) titleEl.textContent = "Кликните по ячейке, чтобы увидеть сделки.";
+    if (tableEl) tableEl.innerHTML = "";
     await track(async (signal) => {
       const d = await api("/api/heatmap", { signal });
-      renderHeatmap($("#heatmap"), d);
+      const root = $("#heatmap");
+      renderHeatmap(root, d);
+      root.onclick = (e) => {
+        const cell = e.target.closest("td[data-object][data-month]");
+        if (!cell) return;
+        $$("#heatmap td.is-active").forEach((td) => td.classList.remove("is-active"));
+        cell.classList.add("is-active");
+        loadHeatmapCellDetails(cell.dataset.object, cell.dataset.month);
+      };
     });
   }
 
@@ -806,7 +890,14 @@
       loadActiveTab();
     });
 
-    $("#filters").addEventListener("change", (e) => {
+    const onFilterChange = (e) => {
+      const quality = e.target.closest("[data-quality]");
+      if (quality) {
+        const flags = [...document.querySelectorAll("[data-quality]:checked")].map((x) => x.dataset.quality);
+        state.filters.data_quality = flags;
+        loadActiveTab({ refreshDims: false });
+        return;
+      }
       const el = e.target.closest("[data-filter]");
       if (!el) return;
       const key = el.dataset.filter;
@@ -823,7 +914,9 @@
       } else {
         loadActiveTab({ refreshDims: false });
       }
-    });
+    };
+    $("#filters").addEventListener("change", onFilterChange);
+    $("#heatmap-filters")?.addEventListener("change", onFilterChange);
 
     $("#line-style-toolbar")?.addEventListener("click", (e) => {
       const btn = e.target.closest("[data-shape]");

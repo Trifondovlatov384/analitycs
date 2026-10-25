@@ -355,9 +355,70 @@ a {
   cursor: pointer;
 }
 
+.heatmap-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.heatmap-sidebar {
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 100px);
+  overflow: auto;
+}
+
+.heatmap-sidebar .filters-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.heatmap-sidebar .filter,
+.heatmap-sidebar .filter--grow {
+  min-width: 0;
+  width: 100%;
+  flex: none;
+}
+
+.heatmap-sidebar .filter-multi-panel {
+  min-width: 100%;
+}
+
+.heatmap-main {
+  min-width: 0;
+}
+
+.hm-divider {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 16px 0 12px;
+}
+
+.heatmap td.is-active {
+  outline: 2px solid #111;
+  outline-offset: -2px;
+}
+
+.heatmap td[data-object] {
+  cursor: pointer;
+}
+
 .heatmap {
   overflow: auto;
   max-height: 520px;
+}
+
+@media (max-width: 980px) {
+  .heatmap-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .heatmap-sidebar {
+    position: static;
+    max-height: none;
+  }
 }
 
 .heatmap table {

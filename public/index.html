@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow, noarchive">
   <title>Аналитика сделок</title>
-  <link rel="stylesheet" href="/css/app.css?v=4">
+  <link rel="stylesheet" href="/css/app.css?v=5">
 </head>
 <body>
   <div class="app" id="app">
@@ -93,11 +93,20 @@
       </section>
 
       <section class="panel" data-panel="tab_heatmap" id="panel-tab_heatmap">
-        <div class="widgets">
-          <article class="widget widget--table">
-            <h2 class="widget-title">Теплокарта продаж</h2>
-            <div id="heatmap" class="heatmap skeleton skeleton-chart"></div>
-          </article>
+        <div class="heatmap-layout">
+          <aside class="heatmap-sidebar widget" id="heatmap-filters">
+            <h2 class="widget-title">Фильтры (Теплокарта)</h2>
+          </aside>
+          <div class="heatmap-main">
+            <article class="widget widget--table">
+              <h2 class="widget-title">Теплокарта: сделки по месяцам</h2>
+              <p class="muted" style="margin:0 0 10px">Кликните по ячейке, чтобы увидеть хронологию сделок снизу.</p>
+              <div id="heatmap" class="heatmap skeleton skeleton-chart"></div>
+              <hr class="hm-divider">
+              <h2 class="widget-title" id="heatmap-click-title">Кликните по ячейке, чтобы увидеть сделки.</h2>
+              <div id="heatmap-click-table" class="widget--table"></div>
+            </article>
+          </div>
         </div>
       </section>
 
@@ -145,6 +154,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" defer></script>
-  <script src="/js/app.js?v=4" defer></script>
+  <script src="/js/app.js?v=5" defer></script>
 </body>
 </html>

@@ -188,10 +188,16 @@ def _heatmap_from_deals(filtered: pl.DataFrame, top_n: int) -> dict:
     totals = [sum(row) for row in z]
     display = [f"{name} ({total})" for name, total in zip(top_objects, totals)]
     months = [sold_month_to_label(m) for m in period_months]
-    return {"objects": top_objects, "display": display, "months": months, "z": z}
+    return {
+        "objects": top_objects,
+        "display": display,
+        "months": months,
+        "month_keys": period_months,
+        "z": z,
+    }
 
 
-def heatmap_data(df: pl.DataFrame, a: dict[str, Any]) -> dict:
+def _heatmap_filtered(df: pl.DataFrame, a: dict[str, Any]) -> pl.DataFrame:
     from aggregations import apply_filters
 
     flags = set(a.get("data_quality") or [])
@@ -235,7 +241,73 @@ def heatmap_data(df: pl.DataFrame, a: dict[str, Any]) -> dict:
         )
     if "known_budget_only" in flags:
         filtered = filtered.filter(pl.col("est_budget").is_not_null() & (pl.col("est_budget") > 0))
-    return _heatmap_from_deals(filtered, a.get("top_n") or 30)
+    return filtered
+
+
+def heatmap_data(df: pl.DataFrame, a: dict[str, Any]) -> dict:
+    filtered = _heatmap_filtered(df, a)
+    return _heatmap_from_deals(filtered, a.get("top_n") or 40)
+
+
+def heatmap_cell_details(df: pl.DataFrame, a: dict[str, Any]) -> dict:
+    from heatmap_loader import month_label_to_sold_month
+
+    obj = (a.get("object") or "").strip()
+    month_raw = (a.get("month") or a.get("sold_month") or "").strip()
+    if not obj or not month_raw:
+        return {
+            "title": "Кликните по ячейке, чтобы увидеть сделки.",
+            "rows": [],
+            "total": 0,
+        }
+
+    month = month_label_to_sold_month(month_raw) or month_raw
+    if len(month) >= 7 and month[4] == "-":
+        month = month[:7]
+
+    filtered = _heatmap_filtered(df, a)
+    dff = filtered.filter((pl.col("object") == obj) & (pl.col("sold_month") == month))
+    if dff.is_empty():
+        return {
+            "title": f"{obj} — {month}: 0 сделок",
+            "rows": [],
+            "total": 0,
+            "message": "Сделок не найдено (после фильтров).",
+        }
+
+    cols = [
+        ("sold_date", "date"),
+        ("est_budget", "budget"),
+        ("deal_status", "status"),
+        ("type_lot", "type_lot"),
+        ("source", "source"),
+        ("city", "city"),
+        ("loc_district", "district"),
+        ("developer", "developer"),
+    ]
+    available = [src for src, _ in cols if src in dff.columns]
+    view = dff.select(available).sort("sold_date" if "sold_date" in available else available[0])
+    rows = []
+    for r in view.head(300).iter_rows(named=True):
+        rows.append(
+            {
+                "date": str(r.get("sold_date") or "")[:10],
+                "budget": round(float(r["est_budget"])) if r.get("est_budget") is not None else None,
+                "status": r.get("deal_status"),
+                "type_lot": r.get("type_lot"),
+                "source": r.get("source"),
+                "city": r.get("city"),
+                "district": r.get("loc_district"),
+                "developer": r.get("developer"),
+            }
+        )
+    return {
+        "title": f"{obj} — {month}: {dff.height} сделок (показано до 300)",
+        "rows": rows,
+        "total": int(dff.height),
+        "object": obj,
+        "month": month,
+    }
 
 
 def euler_data(df: pl.DataFrame, a: dict[str, Any]) -> dict:
