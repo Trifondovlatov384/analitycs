@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <title>Аналитика сделок</title>
+  <link rel="stylesheet" href="/css/app.css?v=4">
+</head>
+<body>
+  <div class="app" id="app">
+    <header class="app-header">
+      <div class="app-header-top">
+        <h1 class="app-title">Аналитика сделок</h1>
+        <a class="app-logout" href="/logout">Выйти</a>
+      </div>
+      <nav class="tabs" id="tabs" role="tablist"></nav>
+    </header>
+
+    <main class="app-main">
+      <section class="filters" id="filters"></section>
+
+      <section class="panel is-active" data-panel="tab_deals" id="panel-tab_deals">
+        <div class="widgets">
+          <div class="widgets-kpi">
+            <article class="widget" id="w-kpi-deals"><div class="kpi-label">Сделок</div><div class="kpi-value skeleton skeleton-kpi">—</div></article>
+            <article class="widget" id="w-kpi-sum"><div class="kpi-label">Объём, ₽</div><div class="kpi-value skeleton skeleton-kpi">—</div></article>
+            <article class="widget" id="w-kpi-avg"><div class="kpi-label">Средняя цена лота, ₽</div><div class="kpi-value skeleton skeleton-kpi">—</div></article>
+          </div>
+          <article class="widget widget--chart">
+            <h2 class="widget-title">Сделки по месяцам</h2>
+            <div class="toolbar" id="line-style-toolbar">
+              <button type="button" class="btn is-active" data-shape="linear">Резкие</button>
+              <button type="button" class="btn" data-shape="spline">Плавные</button>
+            </div>
+            <div class="chart-wrap skeleton skeleton-chart" id="chart-monthly-counts"></div>
+          </article>
+          <article class="widget widget--chart">
+            <h2 class="widget-title">Средняя стоимость лота по месяцам</h2>
+            <div class="chart-wrap skeleton skeleton-chart" id="chart-monthly-avg"></div>
+          </article>
+          <div class="widgets-2">
+            <article class="widget widget--chart">
+              <h2 class="widget-title">Топ комплексов за год</h2>
+              <div id="chart-top-total" class="skeleton skeleton-chart"></div>
+            </article>
+            <article class="widget widget--chart">
+              <h2 class="widget-title">Топ комплексов (ипотека)</h2>
+              <div id="chart-top-mortgage" class="skeleton skeleton-chart"></div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="tab_complexes" id="panel-tab_complexes">
+        <div class="widgets">
+          <div class="widgets-2">
+            <article class="widget widget--chart">
+              <h2 class="widget-title">Сделки по городам</h2>
+              <div class="chart-wrap skeleton skeleton-chart" id="chart-city-counts"></div>
+            </article>
+            <article class="widget widget--chart">
+              <h2 class="widget-title">Помесячные продажи комплекса</h2>
+              <div class="chart-wrap skeleton skeleton-chart" id="chart-complex-monthly"></div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="tab_compare" id="panel-tab_compare">
+        <div class="widgets">
+          <article class="widget widget--chart">
+            <div class="toolbar">
+              <h2 class="widget-title" style="margin:0;flex:1">Сравнение комплексов</h2>
+              <button type="button" class="btn" id="cmp-clear">Сбросить выбор</button>
+            </div>
+            <div class="chart-wrap skeleton skeleton-chart" id="chart-compare"></div>
+          </article>
+          <article class="widget widget--table">
+            <h2 class="widget-title">Таблица комплексов</h2>
+            <div id="table-compare" class="skeleton skeleton-chart"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="tab_euler" id="panel-tab_euler">
+        <div class="widgets">
+          <article class="widget">
+            <h2 class="widget-title">Пересечение бюджетных аудиторий</h2>
+            <div id="euler-summary" class="skeleton skeleton-chart"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="tab_heatmap" id="panel-tab_heatmap">
+        <div class="widgets">
+          <article class="widget widget--table">
+            <h2 class="widget-title">Теплокарта продаж</h2>
+            <div id="heatmap" class="heatmap skeleton skeleton-chart"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="tab_egrz" id="panel-tab_egrz">
+        <div class="widgets">
+          <article class="widget widget--table">
+            <h2 class="widget-title">ЕГРЗ</h2>
+            <div id="table-egrz" class="skeleton skeleton-chart"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="tab_lot_growth" id="panel-tab_lot_growth">
+        <div class="widgets">
+          <article class="widget widget--chart">
+            <h2 class="widget-title">Рост лота по месяцам</h2>
+            <div class="chart-wrap skeleton skeleton-chart" id="chart-lot-growth"></div>
+          </article>
+          <article class="widget widget--table">
+            <h2 class="widget-title">Таблица</h2>
+            <div id="table-lot-growth" class="skeleton skeleton-chart"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="tab_project_growth" id="panel-tab_project_growth">
+        <div class="widgets">
+          <div class="widgets-2">
+            <article class="widget widget--chart">
+              <h2 class="widget-title">Топ по росту бюджета, %</h2>
+              <div id="chart-pg-budget" class="skeleton skeleton-chart"></div>
+            </article>
+            <article class="widget widget--chart">
+              <h2 class="widget-title">Топ по росту цены м², %</h2>
+              <div id="chart-pg-sqm" class="skeleton skeleton-chart"></div>
+            </article>
+          </div>
+          <article class="widget widget--table">
+            <h2 class="widget-title">Таблица роста проектов</h2>
+            <div id="table-pg" class="skeleton skeleton-chart"></div>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" defer></script>
+  <script src="/js/app.js?v=4" defer></script>
+</body>
+</html>

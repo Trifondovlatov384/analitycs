@@ -195,7 +195,13 @@ def app_shell(children: list, *, matrix_available: bool) -> html.Div:
             dcc.Location(id="url", refresh=False),
             dcc.Store(id="tabs", data="tab_deals"),
             dcc.Store(id="chart_line_shape", data="linear"),
-            html.Div(tab_buttons, className="app-tab-bar", role="tablist"),
+            html.Div(
+                [
+                    html.Div(tab_buttons, className="app-tab-bar-tabs", role="tablist"),
+                    html.A("Выйти", href="/logout", className="app-logout-link"),
+                ],
+                className="app-tab-bar",
+            ),
             *children,
             dcc.Store(id="meta_matrix_available", data=matrix_available),
         ],

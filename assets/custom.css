@@ -24,13 +24,35 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
+  justify-content: space-between;
+  gap: 0.75rem;
   padding: 0.65rem;
   margin: 0 0 1.25rem;
   background: var(--app-surface);
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
   box-shadow: var(--app-shadow);
+}
+
+.app-tab-bar-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.app-logout-link {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--app-muted);
+  text-decoration: none;
+  padding: 0.45rem 0.85rem;
+  border-radius: 10px;
+}
+
+.app-logout-link:hover {
+  color: var(--app-accent);
+  background: var(--app-accent-soft);
 }
 
 .app-tab-btn {
@@ -176,4 +198,103 @@ body {
 
 .dash-graph {
   border-radius: 10px;
+}
+
+.login-body {
+  min-height: 100vh;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: var(--app-bg);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  box-shadow: var(--app-shadow);
+  padding: 2rem 1.75rem 1.75rem;
+}
+
+.login-kicker {
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--app-muted);
+}
+
+.login-title {
+  margin: 0;
+  font-size: 1.45rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.login-subtitle {
+  margin: 0.35rem 0 1.35rem;
+  color: var(--app-muted);
+  font-size: 0.95rem;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.login-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--app-muted);
+  margin: 0.65rem 0 0.35rem;
+}
+
+.login-input {
+  font-family: inherit;
+  font-size: 1rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--app-text);
+}
+
+.login-input:focus {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+  border-color: var(--app-accent);
+}
+
+.login-submit {
+  margin-top: 1.25rem;
+  appearance: none;
+  border: 0;
+  border-radius: 10px;
+  background: var(--app-accent);
+  color: #fff;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(37, 99, 235, 0.35);
+}
+
+.login-submit:hover {
+  background: #1d4ed8;
+}
+
+.login-error {
+  margin: 0 0 0.85rem;
+  padding: 0.65rem 0.8rem;
+  border-radius: 10px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 0.9rem;
+  font-weight: 500;
 }

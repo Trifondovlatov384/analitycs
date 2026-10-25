@@ -1,9 +1,27 @@
 {
   "version": 2,
   "builds": [
+    { "src": "public/**", "use": "@vercel/static" },
     { "src": "api/index.py", "use": "@vercel/python", "config": { "maxLambdaSize": "50mb" } }
   ],
   "routes": [
+    { "src": "/api/(.*)", "dest": "/api/index.py" },
+    { "src": "/login", "dest": "/api/index.py" },
+    { "src": "/logout", "dest": "/api/index.py" },
+    { "src": "/robots.txt", "dest": "/api/index.py" },
+    { "src": "/js/(.*)", "dest": "/api/index.py" },
+    { "src": "/", "dest": "/api/index.py" },
+    { "src": "/index.html", "dest": "/api/index.py" },
+    { "src": "/favicon.ico", "dest": "/public/favicon.ico" },
+    { "src": "/css/(.*)", "dest": "/public/css/$1" },
     { "src": "/(.*)", "dest": "/api/index.py" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow, noarchive" }
+      ]
+    }
   ]
 }
