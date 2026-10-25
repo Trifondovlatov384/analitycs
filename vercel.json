@@ -2,7 +2,24 @@
   "version": 2,
   "builds": [
     { "src": "public/**", "use": "@vercel/static" },
-    { "src": "api/index.py", "use": "@vercel/python", "config": { "maxLambdaSize": "50mb" } }
+    {
+      "src": "api/index.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "50mb",
+        "includeFiles": [
+          "public/**",
+          "data/cache/**",
+          "output/**",
+          "aggregations.py",
+          "data_loader.py",
+          "heatmap_loader.py",
+          "project_growth_logic.py",
+          "auth.py",
+          "services/**"
+        ]
+      }
+    }
   ],
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/index.py" },

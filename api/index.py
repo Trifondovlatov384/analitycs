@@ -121,24 +121,31 @@ def api_project_growth():
     return _json(widgets.project_growth_data(get_deals(), a))
 
 
+def _public_file(*parts: str) -> Path:
+    return PUBLIC_DIR.joinpath(*parts)
+
+
 @app.get("/")
 @app.get("/index.html")
 def index_page():
     if not session.get(SESSION_FLAG):
         return redirect("/login")
-    return send_from_directory(PUBLIC_DIR, "index.html")
+    index_path = _public_file("index.html")
+    if not index_path.exists():
+        return ("Dashboard shell not found", 500)
+    return send_from_directory(index_path.parent, index_path.name)
 
 
 @app.get("/css/<path:filename>")
 def css_files(filename: str):
-    return send_from_directory(PUBLIC_DIR / "css", filename)
+    return send_from_directory(_public_file("css"), filename)
 
 
 @app.get("/js/<path:filename>")
 def js_files(filename: str):
     if not session.get(SESSION_FLAG):
         return jsonify({"error": "unauthorized"}), 401
-    return send_from_directory(PUBLIC_DIR / "js", filename)
+    return send_from_directory(_public_file("js"), filename)
 
 
 @app.get("/favicon.ico")
