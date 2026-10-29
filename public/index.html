@@ -4,49 +4,84 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow, noarchive">
-  <title>Аналитика сделок</title>
-  <link rel="stylesheet" href="/css/app.css?v=5">
+  <meta name="theme-color" content="#f5f4f0">
+  <title>Сделки · аналитика</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/css/app.css?v=6">
 </head>
 <body>
   <div class="app" id="app">
     <header class="app-header">
-      <div class="app-header-top">
-        <h1 class="app-title">Аналитика сделок</h1>
-        <a class="app-logout" href="/logout">Выйти</a>
+      <div class="app-header-inner">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="brand-name">Сделки · аналитика</span>
+        </div>
+        <nav class="tabs" id="tabs" role="tablist" aria-label="Разделы"></nav>
+        <div class="header-meta">
+          <span class="data-badge" id="data-badge" hidden></span>
+          <a class="app-logout" href="/logout">Выйти</a>
+        </div>
       </div>
-      <nav class="tabs" id="tabs" role="tablist"></nav>
     </header>
 
     <main class="app-main">
-      <section class="filters" id="filters"></section>
+      <section class="filters-card" id="filters-card">
+        <div class="filters" id="filters"></div>
+        <div class="filters-foot" id="filters-foot"></div>
+      </section>
 
       <section class="panel is-active" data-panel="tab_deals" id="panel-tab_deals">
+        <div class="kpi-grid" id="kpi-grid">
+          <article class="kpi" data-kpi="total_deals"><div class="kpi-label">Сделок</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+          <article class="kpi" data-kpi="sum_budget"><div class="kpi-label">Объём продаж</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+          <article class="kpi" data-kpi="avg_budget"><div class="kpi-label">Средний чек</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+          <article class="kpi" data-kpi="median_budget"><div class="kpi-label">Медианный чек</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+          <article class="kpi" data-kpi="avg_sqm"><div class="kpi-label">Медиана за м²</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+          <article class="kpi" data-kpi="mortgage_share"><div class="kpi-label">Доля ипотеки</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+        </div>
+
         <div class="widgets">
-          <div class="widgets-kpi">
-            <article class="widget" id="w-kpi-deals"><div class="kpi-label">Сделок</div><div class="kpi-value skeleton skeleton-kpi">—</div></article>
-            <article class="widget" id="w-kpi-sum"><div class="kpi-label">Объём, ₽</div><div class="kpi-value skeleton skeleton-kpi">—</div></article>
-            <article class="widget" id="w-kpi-avg"><div class="kpi-label">Средняя цена лота, ₽</div><div class="kpi-value skeleton skeleton-kpi">—</div></article>
-          </div>
           <article class="widget widget--chart">
-            <h2 class="widget-title">Сделки по месяцам</h2>
-            <div class="toolbar" id="line-style-toolbar">
-              <button type="button" class="btn is-active" data-shape="linear">Резкие</button>
-              <button type="button" class="btn" data-shape="spline">Плавные</button>
-            </div>
-            <div class="chart-wrap skeleton skeleton-chart" id="chart-monthly-counts"></div>
+            <header class="widget-head">
+              <div>
+                <h2 class="widget-title">Сделки по месяцам</h2>
+                <p class="widget-sub">Всего, в ипотеку и без ипотеки</p>
+              </div>
+              <div class="segmented" id="line-style-toolbar" role="group" aria-label="Вид линий">
+                <button type="button" class="seg is-active" data-shape="linear">Ломаная</button>
+                <button type="button" class="seg" data-shape="spline">Плавная</button>
+              </div>
+            </header>
+            <div class="chart-wrap chart-wrap--tall skeleton" id="chart-monthly-counts"></div>
           </article>
-          <article class="widget widget--chart">
-            <h2 class="widget-title">Средняя стоимость лота по месяцам</h2>
-            <div class="chart-wrap skeleton skeleton-chart" id="chart-monthly-avg"></div>
-          </article>
+
           <div class="widgets-2">
             <article class="widget widget--chart">
-              <h2 class="widget-title">Топ комплексов за год</h2>
-              <div id="chart-top-total" class="skeleton skeleton-chart"></div>
+              <header class="widget-head"><div><h2 class="widget-title">Средний чек по месяцам</h2><p class="widget-sub">₽, сделки с известным бюджетом</p></div></header>
+              <div class="chart-wrap skeleton" id="chart-monthly-avg"></div>
             </article>
             <article class="widget widget--chart">
-              <h2 class="widget-title">Топ комплексов (ипотека)</h2>
-              <div id="chart-top-mortgage" class="skeleton skeleton-chart"></div>
+              <header class="widget-head"><div><h2 class="widget-title">Цена за м² по месяцам</h2><p class="widget-sub">Медиана, ₽/м² — устойчива к выбросам</p></div></header>
+              <div class="chart-wrap skeleton" id="chart-monthly-sqm"></div>
+            </article>
+          </div>
+
+          <article class="widget widget--chart">
+            <header class="widget-head"><div><h2 class="widget-title">Где сидит спрос</h2><p class="widget-sub">Распределение сделок по бюджету, млн ₽</p></div></header>
+            <div class="chart-wrap skeleton" id="chart-budget-buckets"></div>
+          </article>
+
+          <div class="widgets-2">
+            <article class="widget widget--chart">
+              <header class="widget-head"><div><h2 class="widget-title">Топ комплексов</h2><p class="widget-sub" id="top-total-sub">По числу сделок</p></div></header>
+              <div id="chart-top-total" class="list-wrap skeleton"></div>
+            </article>
+            <article class="widget widget--chart">
+              <header class="widget-head"><div><h2 class="widget-title">Топ комплексов в ипотеку</h2><p class="widget-sub">По числу ипотечных сделок</p></div></header>
+              <div id="chart-top-mortgage" class="list-wrap skeleton"></div>
             </article>
           </div>
         </div>
@@ -56,12 +91,12 @@
         <div class="widgets">
           <div class="widgets-2">
             <article class="widget widget--chart">
-              <h2 class="widget-title">Сделки по городам</h2>
-              <div class="chart-wrap skeleton skeleton-chart" id="chart-city-counts"></div>
+              <header class="widget-head"><div><h2 class="widget-title">Сделки по городам</h2><p class="widget-sub">Топ-40 городов</p></div></header>
+              <div class="chart-wrap chart-wrap--xl skeleton" id="chart-city-counts"></div>
             </article>
             <article class="widget widget--chart">
-              <h2 class="widget-title">Помесячные продажи комплекса</h2>
-              <div class="chart-wrap skeleton skeleton-chart" id="chart-complex-monthly"></div>
+              <header class="widget-head"><div><h2 class="widget-title" id="complex-monthly-title">Помесячные продажи комплекса</h2><p class="widget-sub">Выберите комплекс в фильтрах</p></div></header>
+              <div class="chart-wrap chart-wrap--xl skeleton" id="chart-complex-monthly"></div>
             </article>
           </div>
         </div>
@@ -70,15 +105,15 @@
       <section class="panel" data-panel="tab_compare" id="panel-tab_compare">
         <div class="widgets">
           <article class="widget widget--chart">
-            <div class="toolbar">
-              <h2 class="widget-title" style="margin:0;flex:1">Сравнение комплексов</h2>
-              <button type="button" class="btn" id="cmp-clear">Сбросить выбор</button>
-            </div>
-            <div class="chart-wrap skeleton skeleton-chart" id="chart-compare"></div>
+            <header class="widget-head">
+              <div><h2 class="widget-title">Сравнение комплексов</h2><p class="widget-sub">Цена м² против среднего чека. Размер точки — число сделок. Клик выделяет комплекс</p></div>
+              <button type="button" class="btn btn--ghost" id="cmp-clear">Сбросить выбор</button>
+            </header>
+            <div class="chart-wrap chart-wrap--xl skeleton" id="chart-compare"></div>
           </article>
           <article class="widget widget--table">
-            <h2 class="widget-title">Таблица комплексов</h2>
-            <div id="table-compare" class="skeleton skeleton-chart"></div>
+            <header class="widget-head"><div><h2 class="widget-title">Таблица комплексов</h2><p class="widget-sub">Клик по строке — выделить на графике</p></div></header>
+            <div id="table-compare" class="table-wrap skeleton"></div>
           </article>
         </div>
       </section>
@@ -86,25 +121,26 @@
       <section class="panel" data-panel="tab_euler" id="panel-tab_euler">
         <div class="widgets">
           <article class="widget">
-            <h2 class="widget-title">Пересечение бюджетных аудиторий</h2>
-            <div id="euler-summary" class="skeleton skeleton-chart"></div>
+            <header class="widget-head"><div><h2 class="widget-title">Пересечение бюджетных аудиторий</h2><p class="widget-sub">Сколько ценовых точек в коридоре бюджета у проектов совпадает</p></div></header>
+            <div id="euler-summary" class="skeleton skeleton-block"></div>
           </article>
         </div>
       </section>
 
       <section class="panel" data-panel="tab_heatmap" id="panel-tab_heatmap">
         <div class="heatmap-layout">
-          <aside class="heatmap-sidebar widget" id="heatmap-filters">
-            <h2 class="widget-title">Фильтры (Теплокарта)</h2>
-          </aside>
+          <aside class="heatmap-sidebar widget" id="heatmap-filters"></aside>
           <div class="heatmap-main">
             <article class="widget widget--table">
-              <h2 class="widget-title">Теплокарта: сделки по месяцам</h2>
-              <p class="muted" style="margin:0 0 10px">Кликните по ячейке, чтобы увидеть хронологию сделок снизу.</p>
-              <div id="heatmap" class="heatmap skeleton skeleton-chart"></div>
-              <hr class="hm-divider">
-              <h2 class="widget-title" id="heatmap-click-title">Кликните по ячейке, чтобы увидеть сделки.</h2>
-              <div id="heatmap-click-table" class="widget--table"></div>
+              <header class="widget-head">
+                <div><h2 class="widget-title">Теплокарта продаж по месяцам</h2><p class="widget-sub">Клик по ячейке — список сделок ниже</p></div>
+                <div class="hm-legend" aria-hidden="true"><span>меньше</span><i></i><span>больше</span></div>
+              </header>
+              <div id="heatmap" class="heatmap skeleton"></div>
+            </article>
+            <article class="widget widget--table" id="heatmap-details">
+              <header class="widget-head"><div><h2 class="widget-title" id="heatmap-click-title">Сделки по ячейке</h2><p class="widget-sub" id="heatmap-click-sub">Кликните по ячейке теплокарты</p></div></header>
+              <div id="heatmap-click-table" class="table-wrap"></div>
             </article>
           </div>
         </div>
@@ -113,8 +149,8 @@
       <section class="panel" data-panel="tab_egrz" id="panel-tab_egrz">
         <div class="widgets">
           <article class="widget widget--table">
-            <h2 class="widget-title">ЕГРЗ</h2>
-            <div id="table-egrz" class="skeleton skeleton-chart"></div>
+            <header class="widget-head"><div><h2 class="widget-title" id="egrz-title">ЕГРЗ</h2><p class="widget-sub">Заключения экспертизы — будущие старты</p></div></header>
+            <div id="table-egrz" class="table-wrap skeleton"></div>
           </article>
         </div>
       </section>
@@ -122,12 +158,12 @@
       <section class="panel" data-panel="tab_lot_growth" id="panel-tab_lot_growth">
         <div class="widgets">
           <article class="widget widget--chart">
-            <h2 class="widget-title">Рост лота по месяцам</h2>
-            <div class="chart-wrap skeleton skeleton-chart" id="chart-lot-growth"></div>
+            <header class="widget-head"><div><h2 class="widget-title">Рост лота по месяцам</h2><p class="widget-sub">Средний чек (левая ось) и число сделок (правая)</p></div></header>
+            <div class="chart-wrap chart-wrap--tall skeleton" id="chart-lot-growth"></div>
           </article>
           <article class="widget widget--table">
-            <h2 class="widget-title">Таблица</h2>
-            <div id="table-lot-growth" class="skeleton skeleton-chart"></div>
+            <header class="widget-head"><div><h2 class="widget-title">Таблица</h2></div></header>
+            <div id="table-lot-growth" class="table-wrap skeleton"></div>
           </article>
         </div>
       </section>
@@ -136,24 +172,26 @@
         <div class="widgets">
           <div class="widgets-2">
             <article class="widget widget--chart">
-              <h2 class="widget-title">Топ по росту бюджета, %</h2>
-              <div id="chart-pg-budget" class="skeleton skeleton-chart"></div>
+              <header class="widget-head"><div><h2 class="widget-title">Топ по росту бюджета</h2><p class="widget-sub">%</p></div></header>
+              <div id="chart-pg-budget" class="list-wrap skeleton"></div>
             </article>
             <article class="widget widget--chart">
-              <h2 class="widget-title">Топ по росту цены м², %</h2>
-              <div id="chart-pg-sqm" class="skeleton skeleton-chart"></div>
+              <header class="widget-head"><div><h2 class="widget-title">Топ по росту цены м²</h2><p class="widget-sub">%</p></div></header>
+              <div id="chart-pg-sqm" class="list-wrap skeleton"></div>
             </article>
           </div>
           <article class="widget widget--table">
-            <h2 class="widget-title">Таблица роста проектов</h2>
-            <div id="table-pg" class="skeleton skeleton-chart"></div>
+            <header class="widget-head"><div><h2 class="widget-title">Рост проектов</h2></div></header>
+            <div id="table-pg" class="table-wrap skeleton"></div>
           </article>
         </div>
       </section>
     </main>
   </div>
 
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" defer></script>
-  <script src="/js/app.js?v=5" defer></script>
+  <script src="/js/app.js?v=6" defer></script>
 </body>
 </html>

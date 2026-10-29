@@ -20,31 +20,122 @@ def fmt_int(n: float | int) -> str:
     return f"{int(n):,}".replace(",", " ")
 
 
-def dashboard_kpi(df: pl.DataFrame, a: dict[str, Any]) -> dict:
-    base = filtered_deals(df, a, use_mortgage=False)
-    for_kpi = filtered_deals(df, {**a, "project": a.get("project")}, use_mortgage=True)
-    # re-apply mortgage on base already filtered without mortgage for consistency with old app
-    from aggregations import apply_filters
-
-    for_kpi = apply_filters(
-        base,
-        years=None,
-        months=None,
-        agglomeration=None,
-        cities=None,
-        mortgage_mode=a.get("mortgage_mode") or "all",
-        sources=None,
-        developers=None,
-        type_lots=None,
+def _kpi_numbers(frame: pl.DataFrame) -> dict[str, float | None]:
+    """Core KPI numbers for a filtered slice of deals."""
+    n = frame.height
+    priced = frame.filter(pl.col("est_budget").is_not_null() & (pl.col("est_budget") > 0))
+    sqm = (
+        frame.filter(pl.col("price_sqm").is_not_null() & (pl.col("price_sqm") > 0))
+        if "price_sqm" in frame.columns
+        else frame.clear()
     )
-    k = kpis(for_kpi)
+    mortgage = int(frame.select(pl.col("is_mortgage").cast(pl.Int64).sum()).item() or 0) if n and "is_mortgage" in frame.columns else 0
     return {
+        "total_deals": float(n),
+        "sum_budget": float(priced.select(pl.col("est_budget").sum()).item() or 0) if priced.height else 0.0,
+        "avg_budget": float(priced.select(pl.col("est_budget").mean()).item() or 0) if priced.height else None,
+        "median_budget": float(priced.select(pl.col("est_budget").median()).item() or 0) if priced.height else None,
+        "avg_sqm": float(sqm.select(pl.col("price_sqm").median()).item() or 0) if sqm.height else None,
+        "mortgage_share": (mortgage / n * 100.0) if n else None,
+    }
+
+
+def _shift_year(d: Any, years: int = -1) -> Any:
+    try:
+        return d.replace(year=d.year + years)
+    except ValueError:  # 29 Feb
+        return d.replace(year=d.year + years, day=28)
+
+
+def _previous_period(df: pl.DataFrame, a: dict[str, Any], current: pl.DataFrame) -> pl.DataFrame | None:
+    """Same period one year earlier (year-to-date aware), with all other filters kept."""
+    d0, d1 = a.get("date_from"), a.get("date_to")
+    if d0 is not None or d1 is not None:
+        prev_args = {**a}
+        if d0 is not None:
+            prev_args["date_from"] = _shift_year(d0)
+        if d1 is not None:
+            prev_args["date_to"] = _shift_year(d1)
+        return filtered_deals(df, prev_args, use_mortgage=True)
+    year = parse_year(a.get("year"))
+    if year is None or current.is_empty():
+        return None
+    prev = filtered_deals(df, {**a, "year": year - 1}, use_mortgage=True)
+    # Compare like-for-like: if the current year is partial, cut last year at the same day.
+    last_day = current.select(pl.col("sold_date").max()).item()
+    if last_day is not None and not prev.is_empty():
+        prev = prev.filter(pl.col("sold_date") <= _shift_year(last_day))
+    return prev
+
+
+def _delta_pct(cur: float | None, prev: float | None) -> float | None:
+    if cur is None or prev is None or prev == 0:
+        return None
+    return round((cur - prev) / prev * 100.0, 1)
+
+
+def dashboard_kpi(df: pl.DataFrame, a: dict[str, Any]) -> dict:
+    current = filtered_deals(df, a, use_mortgage=True)
+    k = _kpi_numbers(current)
+    prev_frame = _previous_period(df, a, current)
+    p = _kpi_numbers(prev_frame) if prev_frame is not None and not prev_frame.is_empty() else None
+
+    out: dict[str, Any] = {
+        # legacy formatted fields (kept for compatibility)
         "total_deals": fmt_int(k["total_deals"]),
         "sum_budget": fmt_int(k["sum_budget"]),
-        "avg_budget": fmt_int(k["avg_budget"]),
-        "total_deals_raw": int(k["total_deals"]),
-        "sum_budget_raw": int(k["sum_budget"]),
-        "avg_budget_raw": int(k["avg_budget"]),
+        "avg_budget": fmt_int(k["avg_budget"] or 0),
+    }
+    for key, val in k.items():
+        out[f"{key}_raw"] = round(val, 1) if val is not None else None
+        prev_val = p.get(key) if p else None
+        out[f"{key}_prev"] = round(prev_val, 1) if prev_val is not None else None
+        if key == "mortgage_share":
+            out[f"{key}_delta"] = round(val - prev_val, 1) if val is not None and prev_val is not None else None
+        else:
+            out[f"{key}_delta"] = _delta_pct(val, prev_val)
+    out["has_prev"] = p is not None
+    return out
+
+
+def dashboard_budget_buckets(df: pl.DataFrame, a: dict[str, Any]) -> dict:
+    """How many deals fall into each budget band — shows where demand sits."""
+    base = filtered_deals(df, a, use_mortgage=True)
+    edges = [0, 5, 8, 10, 12, 15, 20, 30, 50]
+    labels = [f"{lo}–{hi}" for lo, hi in zip(edges, edges[1:])] + [f"{edges[-1]}+"]
+    priced = base.filter(pl.col("est_budget").is_not_null() & (pl.col("est_budget") > 0))
+    if priced.is_empty():
+        return {"labels": labels, "values": [0] * len(labels), "shares": [0.0] * len(labels)}
+    mln = priced.select((pl.col("est_budget") / 1_000_000).alias("m")).to_series().to_list()
+    counts = [0] * len(labels)
+    for v in mln:
+        idx = len(edges) - 1
+        for i in range(1, len(edges)):
+            if v < edges[i]:
+                idx = i - 1
+                break
+        counts[idx] += 1
+    total = sum(counts) or 1
+    return {
+        "labels": labels,
+        "values": counts,
+        "shares": [round(c / total * 100, 1) for c in counts],
+    }
+
+
+def dashboard_monthly_sqm(df: pl.DataFrame, a: dict[str, Any]) -> dict:
+    base = filtered_deals(df, a, use_mortgage=True)
+    if base.is_empty() or "price_sqm" not in base.columns:
+        return {"labels": [], "median": []}
+    m = (
+        base.filter(pl.col("price_sqm").is_not_null() & (pl.col("price_sqm") > 0))
+        .group_by("sold_month")
+        .agg(pl.col("price_sqm").median().alias("median"))
+        .sort("sold_month")
+    )
+    return {
+        "labels": m["sold_month"].to_list(),
+        "median": [round(float(x)) if x is not None else None for x in m["median"].to_list()],
     }
 
 
@@ -77,8 +168,8 @@ def dashboard_top_complexes(df: pl.DataFrame, a: dict[str, Any]) -> dict:
     year = a.get("year")
     d0, d1 = a.get("date_from"), a.get("date_to")
     top_year = parse_year(year) if d0 is None and d1 is None else None
-    if top_year is None:
-        return {"total": [], "mortgage": []}
+    if top_year is None and d0 is None and d1 is None:
+        return {"total": [], "mortgage": [], "message": "Выберите год или период"}
 
     def pack(frame: pl.DataFrame) -> list[dict]:
         if frame.is_empty():
@@ -88,8 +179,17 @@ def dashboard_top_complexes(df: pl.DataFrame, a: dict[str, Any]) -> dict:
             for r in frame.head(25).iter_rows(named=True)
         ]
 
-    total = yearly_top_complexes(base, year=int(top_year), only_mortgage=False)
-    mort = yearly_top_complexes(base, year=int(top_year), only_mortgage=True)
+    if top_year is not None:
+        total = yearly_top_complexes(base, year=int(top_year), only_mortgage=False)
+        mort = yearly_top_complexes(base, year=int(top_year), only_mortgage=True)
+    else:  # explicit date range: rank within the range
+        total = base.group_by("object").agg(pl.len().alias("deals")).sort("deals", descending=True)
+        mort = (
+            base.filter(pl.col("is_mortgage") == True)  # noqa: E712
+            .group_by("object")
+            .agg(pl.len().alias("deals"))
+            .sort("deals", descending=True)
+        )
     return {"total": pack(total), "mortgage": pack(mort), "year": top_year}
 
 
@@ -172,7 +272,7 @@ def _heatmap_from_deals(filtered: pl.DataFrame, top_n: int) -> dict:
     )
     pivot = (
         grouped.filter(pl.col("object").is_in(top_objects))
-        .pivot(index="object", columns="sold_month", values="deals", aggregate_function="sum")
+        .pivot(on="sold_month", index="object", values="deals", aggregate_function="sum")
         .fill_null(0)
     )
     for mcol in period_months:
@@ -479,9 +579,20 @@ def egrz_data(a: dict[str, Any]) -> dict:
     import re
     from pathlib import Path
 
-    path = Path("output/dnr_permits_egrz_filtered.csv")
-    if not path.exists():
-        path = Path("output/dnr_permits_egrz.csv")
+    out_dir = Path(__file__).resolve().parent.parent / "output"
+    path = next(
+        (
+            out_dir / name
+            for name in (
+                "dnr_permits_egrz_filtered.csv",
+                "dnr_permits_egrz.csv",
+                "filtered_latest.csv",
+                "new_matches_latest.csv",
+            )
+            if (out_dir / name).exists()
+        ),
+        out_dir / "missing.csv",
+    )
     if not path.exists():
         return {"rows": [], "regions": [], "work_types": [], "message": "Файл ЕГРЗ не найден"}
 

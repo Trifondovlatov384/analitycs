@@ -16,7 +16,9 @@ from services.store import get_deals, matrix_available  # noqa: E402
 from services import widgets  # noqa: E402
 
 PUBLIC_DIR = ROOT / "public"
-ADMIN_ACCESS_KEY = os.environ.get("ADMIN_ACCESS_KEY", "dev-admin-key")
+# Hidden admin tabs. On Vercel they stay closed until ADMIN_ACCESS_KEY is set;
+# locally the old dev key still works for convenience.
+ADMIN_ACCESS_KEY = os.environ.get("ADMIN_ACCESS_KEY") or (None if os.environ.get("VERCEL") else "dev-admin-key")
 
 app = Flask(__name__, static_folder=None)
 protect_flask_app(app)
@@ -30,7 +32,7 @@ def _json(data, status: int = 200):
 
 
 def _require_admin(a: dict):
-    if a.get("access") != ADMIN_ACCESS_KEY:
+    if not ADMIN_ACCESS_KEY or a.get("access") != ADMIN_ACCESS_KEY:
         return _json({"error": "forbidden"}, 403)
     return None
 
@@ -66,6 +68,28 @@ def api_deals_monthly_counts():
 @app.get("/api/deals/monthly-avg")
 def api_deals_monthly_avg():
     return _json(widgets.dashboard_monthly_avg(get_deals(), args_from_request(request)))
+
+
+@app.get("/api/deals/budget-buckets")
+def api_deals_budget_buckets():
+    return _json(widgets.dashboard_budget_buckets(get_deals(), args_from_request(request)))
+
+
+@app.get("/api/deals/monthly-sqm")
+def api_deals_monthly_sqm():
+    return _json(widgets.dashboard_monthly_sqm(get_deals(), args_from_request(request)))
+
+
+@app.errorhandler(Exception)
+def api_error(err):  # pragma: no cover - safety net
+    from werkzeug.exceptions import HTTPException
+
+    if isinstance(err, HTTPException):
+        return err
+    app.logger.exception("Unhandled error on %s", request.path)
+    if request.path.startswith("/api/"):
+        return _json({"error": "Ошибка на сервере, попробуйте изменить фильтры"}, 500)
+    return ("Internal Server Error", 500)
 
 
 @app.get("/api/deals/top-complexes")

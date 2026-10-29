@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import secrets
+import time
 from datetime import timedelta
 from urllib.parse import quote, unquote
 
@@ -11,11 +13,9 @@ from flask import Flask, jsonify, redirect, request, session
 SESSION_FLAG = "dash_authenticated"
 SESSION_USER = "dash_username"
 
-# Default accounts (override via DASH_AUTH_USERS="user1:pass1,user2:pass2")
-_DEFAULT_USERS = {
-    "Persey": "32556258",
-    "Nikson87": "5791Nikita",
-}
+# Accounts come only from the environment: DASH_AUTH_USERS="user1:pass1,user2:pass2"
+# (or DASH_AUTH_USER + DASH_AUTH_PASSWORD). No passwords live in the repository.
+_DEFAULT_USERS: dict[str, str] = {}
 
 PUBLIC_PATHS = frozenset({"/login", "/logout", "/robots.txt", "/favicon.ico"})
 PUBLIC_PREFIXES = ("/assets/", "/css/", "/_favicon")
@@ -28,10 +28,13 @@ LOGIN_HTML = """<!DOCTYPE html>
   <meta name="robots" content="noindex, nofollow, noarchive">
   <meta name="googlebot" content="noindex, nofollow, noarchive">
   <title>Вход — Аналитика сделок</title>
-  <link rel="stylesheet" href="/css/app.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/css/app.css?v=6">
 </head>
 <body class="login-body">
   <main class="login-card">
+    <div class="brand brand--login"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="brand-name">Сделки · аналитика</span></div>
     <p class="login-kicker">Закрытый доступ</p>
     <h1 class="login-title">Аналитика сделок</h1>
     <p class="login-subtitle">Войдите, чтобы открыть дашборд</p>
@@ -78,6 +81,22 @@ def load_auth_users() -> dict[str, str]:
     return users
 
 
+_FAILED: dict[str, list[float]] = {}
+_WINDOW_S = 15 * 60
+_MAX_FAILS = 10
+
+
+def _too_many_attempts(key: str) -> bool:
+    now = time.time()
+    hits = [t for t in _FAILED.get(key, []) if now - t < _WINDOW_S]
+    _FAILED[key] = hits
+    return len(hits) >= _MAX_FAILS
+
+
+def _note_failure(key: str) -> None:
+    _FAILED.setdefault(key, []).append(time.time())
+
+
 def credentials_ok(username: str, password: str) -> bool:
     users = load_auth_users()
     expected = users.get(username)
@@ -105,7 +124,7 @@ def _safe_next(raw: str | None) -> str:
 
 def protect_flask_app(flask_app: Flask) -> None:
     flask_app.config.update(
-        SECRET_KEY=os.environ.get("FLASK_SECRET_KEY", "persey-analitycs-session-v2"),
+        SECRET_KEY=os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_SECURE=os.environ.get("VERCEL") == "1",
@@ -142,13 +161,20 @@ def protect_flask_app(flask_app: Flask) -> None:
         if request.method == "POST":
             username = (request.form.get("username") or "").strip()
             password = request.form.get("password") or ""
-            if credentials_ok(username, password):
+            client = (request.headers.get("X-Forwarded-For") or request.remote_addr or "?").split(",")[0].strip()
+            if _too_many_attempts(client):
+                error = '<p class="login-error">Слишком много попыток. Попробуйте через 15 минут</p>'
+            elif not load_auth_users():
+                error = '<p class="login-error">Доступ не настроен: задайте DASH_AUTH_USERS</p>'
+            elif credentials_ok(username, password):
                 session.clear()
                 session.permanent = True
                 session[SESSION_FLAG] = True
                 session[SESSION_USER] = username
                 return redirect(_safe_next(request.form.get("next") or request.args.get("next")))
-            error = '<p class="login-error">Неверный логин или пароль</p>'
+            else:
+                _note_failure(client)
+                error = '<p class="login-error">Неверный логин или пароль</p>'
         nxt = _safe_next(request.values.get("next"))
         html = LOGIN_HTML.replace("{error}", error).replace("{next}", nxt.replace('"', "&quot;"))
         return html, 200, {"Content-Type": "text/html; charset=utf-8"}

@@ -3,7 +3,7 @@
     ["tab_deals", "Дашборд"],
     ["tab_complexes", "Комплексы"],
     ["tab_compare", "Сравнение"],
-    ["tab_euler", "Эйлер"],
+    ["tab_euler", "Пересечение аудиторий"],
     ["tab_heatmap", "Теплокарта"],
   ];
   const HIDDEN_TABS = {
@@ -12,94 +12,150 @@
     tab_project_growth: "Рост проектов",
   };
   const ADMIN_TABS = new Set(["tab_lot_growth", "tab_project_growth"]);
+  const MONTHS_RU = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+  const MONTHS_RU_FULL = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
+
+  const DEFAULT_FILTERS = {
+    source: "all",
+    agglomeration: "all",
+    year: null,
+    date_from: "",
+    date_to: "",
+    months: [],
+    city: [],
+    developer: [],
+    project: [],
+    type_lot: [],
+    mortgage_mode: "all",
+    budget_min: "",
+    budget_max: "",
+    object: "",
+    district: [],
+    selected: [],
+    top_n: 40,
+    line_shape: "linear",
+    data_quality: ["exclude_wholesale", "known_budget_only"],
+    target_budget: 8000000,
+    delta_budget: 3000000,
+    type_lot_single: "",
+    projects: [],
+    search: "",
+    region: [],
+    work_type: [],
+    access: "",
+  };
 
   const state = {
     tab: "tab_deals",
     meta: null,
     dims: null,
-    filters: {
-      source: "all",
-      agglomeration: "all",
-      year: null,
-      date_from: "",
-      date_to: "",
-      months: [],
-      city: [],
-      developer: [],
-      project: [],
-      type_lot: [],
-      mortgage_mode: "all",
-      budget_min: "",
-      budget_max: "",
-      object: "",
-      district: [],
-      selected: [],
-      top_n: 40,
-      line_shape: "linear",
-      data_quality: ["exclude_wholesale", "known_budget_only"],
-      target_budget: 8000000,
-      delta_budget: 3000000,
-      type_lot_single: "",
-      projects: [],
-      search: "",
-      region: [],
-      work_type: [],
-      access: "",
-    },
+    filters: structuredClone(DEFAULT_FILTERS),
     charts: {},
     controllers: [],
-    loadedTabs: new Set(),
+    msOptions: {},
+    tableSort: {},
   };
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
-  function qs() {
-    return new URLSearchParams(location.search);
+  /* ───────────────────────── Formatting ───────────────────────── */
+
+  const nf0 = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 });
+  const nf1 = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 });
+  const nf2 = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 });
+
+  function fmt(v) {
+    if (v === null || v === undefined || v === "") return "—";
+    if (typeof v === "number") return Number.isFinite(v) ? nf0.format(v) : "—";
+    return String(v);
   }
 
+  /** 1 234 567 890 → { num: "1,23", unit: "млрд" } */
+  function compact(v) {
+    if (v === null || v === undefined || !Number.isFinite(Number(v))) return { num: "—", unit: "" };
+    const n = Number(v);
+    const a = Math.abs(n);
+    if (a >= 1e9) return { num: nf2.format(n / 1e9), unit: "млрд" };
+    if (a >= 1e6) return { num: nf1.format(n / 1e6), unit: "млн" };
+    if (a >= 1e4) return { num: nf0.format(n / 1e3), unit: "тыс" };
+    return { num: nf0.format(n), unit: "" };
+  }
+  const compactStr = (v) => {
+    const c = compact(v);
+    return c.unit ? `${c.num} ${c.unit}` : c.num;
+  };
+
+  function monthLabel(key) {
+    // "2026-03" → "мар 26"
+    const m = /^(\d{4})-(\d{2})/.exec(String(key || ""));
+    if (!m) return String(key ?? "");
+    return `${MONTHS_RU[Number(m[2]) - 1]} ${m[1].slice(2)}`;
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;");
+  }
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function palette() {
+    return {
+      ink: cssVar("--ink") || "#16181d",
+      muted: cssVar("--muted") || "#6f747c",
+      faint: cssVar("--faint") || "#a3a7ad",
+      line: cssVar("--line") || "#e7e5df",
+      sea: cssVar("--sea") || "#0e7490",
+      sand: cssVar("--sand") || "#c98a2b",
+      surface: cssVar("--surface") || "#fff",
+    };
+  }
+
+  function toast(msg) {
+    const el = $("#toast");
+    if (!el) return;
+    el.textContent = msg;
+    el.hidden = false;
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => (el.hidden = true), 3500);
+  }
+
+  /* ───────────────────────── URL state ───────────────────────── */
+
+  const SCALAR_KEYS = [
+    "source", "agglomeration", "year", "date_from", "date_to", "mortgage_mode", "budget_min", "budget_max",
+    "object", "line_shape", "search", "type_lot_single", "top_n", "target_budget", "delta_budget",
+  ];
+  const LIST_KEYS = ["months", "city", "developer", "project", "type_lot", "district", "selected", "projects", "region", "work_type", "data_quality"];
+
   function readUrl() {
-    const p = qs();
-    const tab = p.get("tab") || "tab_deals";
-    state.tab = tab;
+    const p = new URLSearchParams(location.search);
+    state.tab = p.get("tab") || "tab_deals";
     state.filters.access = p.get("access") || "";
-    const keys = [
-      "source",
-      "agglomeration",
-      "year",
-      "date_from",
-      "date_to",
-      "mortgage_mode",
-      "budget_min",
-      "budget_max",
-      "object",
-      "line_shape",
-      "search",
-      "type_lot_single",
-      "top_n",
-      "target_budget",
-      "delta_budget",
-    ];
-    for (const k of keys) {
-      if (p.has(k)) state.filters[k] = p.get(k);
+    for (const k of SCALAR_KEYS) if (p.has(k)) state.filters[k] = p.get(k);
+    for (const k of LIST_KEYS) if (p.has(k)) state.filters[k] = p.get(k).split(",").filter(Boolean);
+    for (const k of ["year", "top_n", "target_budget", "delta_budget"]) {
+      if (state.filters[k] !== null && state.filters[k] !== "") {
+        const n = Number(state.filters[k]);
+        state.filters[k] = Number.isFinite(n) ? n : DEFAULT_FILTERS[k];
+      }
     }
-    for (const k of ["months", "city", "developer", "project", "type_lot", "district", "selected", "projects", "region", "work_type", "data_quality"]) {
-      if (p.has(k)) state.filters[k] = p.get(k).split(",").filter(Boolean);
-    }
-    if (state.filters.year) state.filters.year = Number(state.filters.year);
-    if (state.filters.top_n) state.filters.top_n = Number(state.filters.top_n);
-    if (state.filters.target_budget) state.filters.target_budget = Number(state.filters.target_budget);
-    if (state.filters.delta_budget) state.filters.delta_budget = Number(state.filters.delta_budget);
   }
 
   function writeUrl() {
     const p = new URLSearchParams();
-    if (state.tab !== "tab_deals") p.set("tab", state.tab);
-    if (state.filters.access) p.set("access", state.filters.access);
     const f = state.filters;
-    const putScalar = (k, skipVals = []) => {
+    if (state.tab !== "tab_deals") p.set("tab", state.tab);
+    if (f.access) p.set("access", f.access);
+    const putScalar = (k, skip = []) => {
       const v = f[k];
-      if (v === null || v === undefined || v === "" || skipVals.includes(v)) return;
+      if (v === null || v === undefined || v === "" || skip.includes(v)) return;
       p.set(k, String(v));
     };
     putScalar("source", ["all"]);
@@ -122,94 +178,121 @@
     for (const k of ["months", "city", "developer", "project", "type_lot", "district", "selected", "projects", "region", "work_type"]) {
       if (f[k] && f[k].length) p.set(k, f[k].join(","));
     }
-    if (
-      state.tab === "tab_heatmap" &&
-      f.data_quality &&
-      f.data_quality.length &&
-      !(f.data_quality.length === 2 && f.data_quality.includes("exclude_wholesale") && f.data_quality.includes("known_budget_only"))
-    ) {
-      p.set("data_quality", f.data_quality.join(","));
+    const dq = f.data_quality || [];
+    if (state.tab === "tab_heatmap" && !(dq.length === 2 && dq.includes("exclude_wholesale") && dq.includes("known_budget_only"))) {
+      p.set("data_quality", dq.join(",") || "none");
     }
     const next = p.toString();
-    const url = next ? `?${next}` : location.pathname;
-    history.replaceState(null, "", url);
+    history.replaceState(null, "", next ? `?${next}` : location.pathname);
   }
 
   function filterQuery(extra = {}) {
     const f = { ...state.filters, ...extra };
     const p = new URLSearchParams();
-    const put = (k, v) => {
-      if (v === null || v === undefined || v === "") return;
+    const keys = [
+      "source", "agglomeration", "year", "date_from", "date_to", "months", "city", "developer", "project", "type_lot",
+      "mortgage_mode", "budget_min", "budget_max", "object", "month", "district", "selected", "top_n", "line_shape",
+      "data_quality", "target_budget", "delta_budget", "type_lot_single", "projects", "search", "region", "work_type", "access",
+    ];
+    for (const k of keys) {
+      const v = f[k];
+      if (v === null || v === undefined || v === "") continue;
       if (Array.isArray(v)) {
         if (v.length) p.set(k, v.join(","));
-        return;
+        continue;
       }
       p.set(k, String(v));
-    };
-    put("source", f.source);
-    put("agglomeration", f.agglomeration);
-    put("year", f.year);
-    put("date_from", f.date_from);
-    put("date_to", f.date_to);
-    put("months", f.months);
-    put("city", f.city);
-    put("developer", f.developer);
-    put("project", f.project);
-    put("type_lot", f.type_lot);
-    put("mortgage_mode", f.mortgage_mode);
-    put("budget_min", f.budget_min);
-    put("budget_max", f.budget_max);
-    put("object", f.object);
-    put("month", f.month);
-    put("district", f.district);
-    put("selected", f.selected);
-    put("top_n", f.top_n);
-    put("line_shape", f.line_shape);
-    put("data_quality", f.data_quality);
-    put("target_budget", f.target_budget);
-    put("delta_budget", f.delta_budget);
-    put("type_lot_single", f.type_lot_single);
-    put("projects", f.projects);
-    put("search", f.search);
-    put("region", f.region);
-    put("work_type", f.work_type);
-    put("access", f.access);
+    }
     return p.toString();
   }
+
+  /* ───────────────────────── Fetching ───────────────────────── */
 
   function abortAll() {
     for (const c of state.controllers) c.abort();
     state.controllers = [];
   }
 
-  async function api(path, { signal } = {}) {
-    const q = filterQuery();
-    const url = q ? `${path}?${q}` : path;
-    const res = await fetch(url, { credentials: "same-origin", signal });
+  async function api(path, { signal, extra } = {}) {
+    const q = filterQuery(extra);
+    const res = await fetch(q ? `${path}?${q}` : path, { credentials: "same-origin", signal });
     if (res.status === 401) {
       location.href = `/login?next=${encodeURIComponent(location.pathname + location.search)}`;
       throw new Error("unauthorized");
     }
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || res.statusText);
+      throw new Error(body.error || `Ошибка ${res.status}`);
     }
     return res.json();
   }
 
-  function track(promise) {
+  /** Runs a loader; on failure shows the error inside `el` instead of an endless skeleton. */
+  function track(fn, els = []) {
     const c = new AbortController();
     state.controllers.push(c);
-    return promise(c.signal).finally(() => {
-      state.controllers = state.controllers.filter((x) => x !== c);
-    });
+    return fn(c.signal)
+      .catch((err) => {
+        if (err.name === "AbortError" || err.message === "unauthorized") return;
+        console.error(err);
+        for (const el of [els].flat().filter(Boolean)) {
+          clearSkeleton(el);
+          el.innerHTML = `<div class="error-box">Не удалось загрузить: ${escapeHtml(err.message)}</div>`;
+        }
+      })
+      .finally(() => {
+        state.controllers = state.controllers.filter((x) => x !== c);
+      });
   }
 
-  function setSkeleton(el, on) {
+  function clearSkeleton(el) {
+    el?.classList.remove("skeleton");
+  }
+  function setLoading(el) {
     if (!el) return;
-    el.classList.toggle("skeleton", on);
-    if (on) el.classList.add("skeleton-chart");
-    else el.classList.remove("skeleton-chart", "skeleton-kpi");
+    el.classList.add("skeleton");
+  }
+
+  /* ───────────────────────── Charts ───────────────────────── */
+
+  let chartReady = null;
+  function ensureChartJs() {
+    if (window.Chart) return Promise.resolve();
+    if (chartReady) return chartReady;
+    chartReady = new Promise((resolve) => {
+      // jsDelivr sometimes is slow/blocked — fall back to unpkg.
+      const s = document.createElement("script");
+      s.src = "https://unpkg.com/chart.js@4.4.7/dist/chart.umd.min.js";
+      s.onload = () => resolve();
+      s.onerror = () => resolve();
+      document.head.appendChild(s);
+    });
+    return chartReady;
+  }
+
+  function applyChartDefaults() {
+    if (!window.Chart || applyChartDefaults.done) return;
+    applyChartDefaults.done = true;
+    const c = palette();
+    const d = Chart.defaults;
+    d.font.family = cssVar("--font") || "Inter, system-ui, sans-serif";
+    d.font.size = 12;
+    d.color = c.muted;
+    d.borderColor = c.line;
+    d.animation.duration = 350;
+    d.plugins.legend.labels.usePointStyle = true;
+    d.plugins.legend.labels.pointStyle = "circle";
+    d.plugins.legend.labels.boxWidth = 7;
+    d.plugins.legend.labels.boxHeight = 7;
+    d.plugins.legend.labels.padding = 14;
+    d.plugins.tooltip.backgroundColor = c.ink;
+    d.plugins.tooltip.titleColor = c.surface;
+    d.plugins.tooltip.bodyColor = c.surface;
+    d.plugins.tooltip.padding = 10;
+    d.plugins.tooltip.cornerRadius = 8;
+    d.plugins.tooltip.boxPadding = 4;
+    d.plugins.tooltip.usePointStyle = true;
+    d.plugins.tooltip.titleFont = { weight: "600" };
   }
 
   function destroyChart(key) {
@@ -220,17 +303,42 @@
   }
 
   function ensureCanvas(container) {
-    container.classList.remove("skeleton", "skeleton-chart");
+    clearSkeleton(container);
     container.innerHTML = "";
     const canvas = document.createElement("canvas");
     container.appendChild(canvas);
     return canvas;
   }
 
-  function lineChart(key, container, labels, datasets, { tension = 0 } = {}) {
+  function emptyState(container, title, sub = "") {
+    clearSkeleton(container);
+    container.innerHTML = `<div class="empty"><strong>${escapeHtml(title)}</strong>${escapeHtml(sub)}</div>`;
+  }
+
+  function gradient(ctx, color) {
+    const { chart } = ctx;
+    const area = chart.chartArea;
+    if (!area) return "transparent";
+    const g = chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+    g.addColorStop(0, color + "33");
+    g.addColorStop(1, color + "00");
+    return g;
+  }
+
+  function lineChart(key, container, labels, datasets, { tension = 0, money = false, y1 = false } = {}) {
     destroyChart(key);
-    if (!window.Chart) return;
+    if (!window.Chart) return emptyState(container, "Графики не загрузились", "Проверьте соединение и обновите страницу");
+    if (!labels.length) return emptyState(container, "Нет данных", "Попробуйте ослабить фильтры");
     const canvas = ensureCanvas(container);
+    const c = palette();
+    const tick = (v) => (money ? compactStr(v) : nf0.format(v));
+    const scales = {
+      x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 14, callback: (_v, i) => monthLabel(labels[i]) } },
+      y: { beginAtZero: !money, grid: { color: c.line }, border: { display: false }, ticks: { callback: tick, maxTicksLimit: 6 } },
+    };
+    if (y1) {
+      scales.y1 = { position: "right", beginAtZero: true, grid: { display: false }, border: { display: false }, ticks: { maxTicksLimit: 6 } };
+    }
     state.charts[key] = new Chart(canvas, {
       type: "line",
       data: { labels, datasets },
@@ -238,158 +346,217 @@
         responsive: true,
         maintainAspectRatio: false,
         interaction: { mode: "index", intersect: false },
-        plugins: { legend: { position: "top", align: "start" } },
-        elements: { line: { tension }, point: { radius: 2 } },
-        scales: {
-          x: { grid: { display: false } },
-          y: { beginAtZero: true, grid: { color: "#eef1f4" } },
+        plugins: {
+          legend: { display: datasets.length > 1, position: "top", align: "end" },
+          tooltip: {
+            callbacks: {
+              title: (items) => monthLabel(labels[items[0].dataIndex]),
+              label: (ctx) => {
+                const v = ctx.parsed.y;
+                const isMoney = money && ctx.dataset.yAxisID !== "y1";
+                return ` ${ctx.dataset.label}: ${isMoney ? compactStr(v) + " ₽" : nf0.format(v)}`;
+              },
+            },
+          },
         },
+        elements: {
+          line: { tension, borderWidth: 2 },
+          point: { radius: 0, hoverRadius: 4, hitRadius: 8 },
+        },
+        scales,
       },
     });
   }
 
-  function barChart(key, container, labels, values, { horizontal = true } = {}) {
+  function barChart(key, container, labels, values, { horizontal = true, color, monthAxis = false, tooltipSuffix = "" } = {}) {
     destroyChart(key);
-    if (!window.Chart) return;
+    if (!window.Chart) return emptyState(container, "Графики не загрузились");
+    if (!labels.length) return emptyState(container, "Нет данных", "Попробуйте ослабить фильтры");
     const canvas = ensureCanvas(container);
+    const c = palette();
+    const catTicks = monthAxis ? { callback: (_v, i) => monthLabel(labels[i]), maxRotation: 0, autoSkipPadding: 10 } : {};
     state.charts[key] = new Chart(canvas, {
       type: "bar",
       data: {
         labels,
-        datasets: [{ data: values, backgroundColor: "#3d6ef5", borderRadius: 4 }],
+        datasets: [{ data: values, backgroundColor: color || c.sea, borderRadius: 5, borderSkipped: false, maxBarThickness: horizontal ? 16 : 42 }],
       },
       options: {
         indexAxis: horizontal ? "y" : "x",
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { beginAtZero: true, grid: { color: "#eef1f4" } },
-          y: { grid: { display: false } },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: (items) => (monthAxis ? monthLabel(labels[items[0].dataIndex]) : labels[items[0].dataIndex]),
+              label: (ctx) => ` ${nf0.format(horizontal ? ctx.parsed.x : ctx.parsed.y)}${tooltipSuffix}`,
+            },
+          },
         },
+        scales: horizontal
+          ? {
+              x: { beginAtZero: true, grid: { color: c.line }, border: { display: false } },
+              y: { grid: { display: false }, border: { display: false }, ticks: { autoSkip: false, color: c.ink } },
+            }
+          : {
+              x: { grid: { display: false }, ticks: catTicks },
+              y: { beginAtZero: true, grid: { color: c.line }, border: { display: false } },
+            },
       },
     });
   }
 
   function scatterChart(key, container, points, onClick) {
     destroyChart(key);
-    if (!window.Chart) return;
+    if (!window.Chart) return emptyState(container, "Графики не загрузились");
+    if (!points.length) return emptyState(container, "Нет данных", "Попробуйте ослабить фильтры");
     const canvas = ensureCanvas(container);
+    const c = palette();
+    const maxDeals = Math.max(...points.map((p) => p.deals || 1), 1);
+    const r = (d) => 3 + Math.sqrt((d || 1) / maxDeals) * 16;
     const selected = points.filter((p) => p.selected);
     const rest = points.filter((p) => !p.selected);
+    const toPt = (p) => ({ x: p.x, y: p.y, name: p.name, deals: p.deals, r: r(p.deals) });
     state.charts[key] = new Chart(canvas, {
-      type: "scatter",
+      type: "bubble",
       data: {
         datasets: [
-          {
-            label: "Комплексы",
-            data: rest.map((p) => ({ x: p.x, y: p.y, name: p.name })),
-            backgroundColor: "rgba(61,110,245,0.45)",
-          },
-          {
-            label: "Выбранные",
-            data: selected.map((p) => ({ x: p.x, y: p.y, name: p.name })),
-            backgroundColor: "#111",
-            pointRadius: 6,
-          },
+          { label: "Комплексы", data: rest.map(toPt), backgroundColor: c.sea + "40", borderColor: c.sea + "99", borderWidth: 1 },
+          { label: "Выбранные", data: selected.map(toPt), backgroundColor: c.sand + "cc", borderColor: c.ink, borderWidth: 1.5 },
         ],
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
+          legend: { position: "top", align: "end" },
           tooltip: {
             callbacks: {
-              label(ctx) {
-                const n = ctx.raw.name || "";
-                return `${n}: м² ${ctx.raw.x}, бюджет ${ctx.raw.y}`;
-              },
+              title: (items) => items[0].raw.name || "",
+              label: (ctx) => [
+                ` Цена м²: ${nf0.format(ctx.raw.x)} ₽`,
+                ` Средний чек: ${compactStr(ctx.raw.y)} ₽`,
+                ` Сделок: ${nf0.format(ctx.raw.deals || 0)}`,
+              ],
             },
           },
         },
         scales: {
-          x: { title: { display: true, text: "Цена м²" }, grid: { color: "#eef1f4" } },
-          y: { title: { display: true, text: "Средний бюджет" }, grid: { color: "#eef1f4" } },
+          x: { title: { display: true, text: "Цена м², ₽" }, grid: { color: c.line }, border: { display: false }, ticks: { callback: compactStr } },
+          y: { title: { display: true, text: "Средний чек, ₽" }, grid: { color: c.line }, border: { display: false }, ticks: { callback: compactStr } },
+        },
+        onHover(e, els) {
+          e.native.target.style.cursor = els.length ? "pointer" : "default";
         },
         onClick(_e, elements) {
           if (!elements.length || !onClick) return;
           const el = elements[0];
-          const ds = state.charts[key].data.datasets[el.datasetIndex].data[el.index];
-          if (ds?.name) onClick(ds.name);
+          const raw = state.charts[key].data.datasets[el.datasetIndex].data[el.index];
+          if (raw?.name) onClick(raw.name);
         },
       },
     });
   }
 
-  function renderBarList(container, items) {
-    container.classList.remove("skeleton", "skeleton-chart");
-    if (!items.length) {
-      container.innerHTML = '<div class="empty">Нет данных</div>';
-      return;
-    }
-    const max = Math.max(...items.map((i) => i.deals || i.value || 0), 1);
+  /* ───────────────────────── Lists & tables ───────────────────────── */
+
+  function renderBarList(container, items, { variant = "", suffix = "" } = {}) {
+    clearSkeleton(container);
+    if (!items.length) return emptyState(container, "Нет данных");
+    const vals = items.map((i) => Number(i.deals ?? i.value ?? 0));
+    const max = Math.max(...vals.map(Math.abs), 1);
     container.innerHTML = `<div class="bar-list">${items
-      .map((i) => {
-        const v = i.deals ?? i.value ?? 0;
-        const pct = Math.round((v / max) * 100);
-        return `<div class="bar-row"><div class="bar-name" title="${escapeHtml(i.name)}">${escapeHtml(i.name)}</div><div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div><div>${fmt(v)}</div></div>`;
+      .map((i, idx) => {
+        const v = vals[idx];
+        const pct = Math.max(2, Math.round((Math.abs(v) / max) * 100));
+        const cls = v < 0 ? "bar-fill--neg" : variant;
+        const shown = suffix ? `${nf1.format(v)}${suffix}` : nf0.format(v);
+        return `<div class="bar-row"><span class="bar-rank">${idx + 1}</span><span class="bar-name" title="${escapeHtml(i.name)}">${escapeHtml(i.name)}</span><span class="bar-val">${shown}</span><div class="bar-track"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div></div>`;
       })
       .join("")}</div>`;
   }
 
-  function renderTable(container, rows, columns, { rowKey = "object", selected = [] } = {}) {
-    container.classList.remove("skeleton", "skeleton-chart");
-    if (!rows.length) {
-      container.innerHTML = '<div class="empty">Нет данных</div>';
-      return;
+  /**
+   * columns: [{ key, label, num?, money?, wrap?, render? }]
+   * Sorting is done client-side by clicking a header.
+   */
+  function renderTable(container, rows, columns, { rowKey = "object", selected = [], clickable = false, id } = {}) {
+    clearSkeleton(container);
+    if (!rows.length) return emptyState(container, "Нет данных", "Попробуйте ослабить фильтры");
+    const sortKey = id || container.id;
+    const sort = state.tableSort[sortKey];
+    let data = rows;
+    if (sort) {
+      const dir = sort.dir === "asc" ? 1 : -1;
+      data = [...rows].sort((a, b) => {
+        const x = a[sort.key];
+        const y = b[sort.key];
+        if (x == null && y == null) return 0;
+        if (x == null) return 1;
+        if (y == null) return -1;
+        if (typeof x === "number" && typeof y === "number") return (x - y) * dir;
+        return String(x).localeCompare(String(y), "ru") * dir;
+      });
     }
     const sel = new Set(selected);
-    const head = columns.map((c) => `<th>${escapeHtml(c.label)}</th>`).join("");
-    const body = rows
-      .map((r) => {
-        const key = r[rowKey];
-        const cls = sel.has(key) ? "is-selected" : "";
-        const cells = columns.map((c) => `<td>${escapeHtml(fmt(r[c.key]))}</td>`).join("");
-        return `<tr class="${cls}" data-key="${escapeHtml(String(key ?? ""))}">${cells}</tr>`;
+    const head = columns
+      .map((c) => {
+        const active = sort?.key === c.key;
+        const arrow = active ? `<span class="sort">${sort.dir === "asc" ? "▲" : "▼"}</span>` : "";
+        return `<th class="${c.num ? "num" : ""} ${active ? "is-sorted" : ""}" data-sort="${c.key}">${escapeHtml(c.label)}${arrow}</th>`;
       })
       .join("");
-    container.innerHTML = `<table class="data-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    const body = data
+      .map((r) => {
+        const key = r[rowKey];
+        const cells = columns
+          .map((c) => {
+            const raw = r[c.key];
+            const val = c.render ? c.render(raw, r) : c.money ? (raw == null ? "—" : nf0.format(raw)) : fmt(raw);
+            return `<td class="${c.num || c.money ? "num" : ""} ${c.wrap ? "wrap" : ""}">${c.render ? val : escapeHtml(val)}</td>`;
+          })
+          .join("");
+        return `<tr class="${sel.has(key) ? "is-selected" : ""}" data-key="${escapeHtml(String(key ?? ""))}">${cells}</tr>`;
+      })
+      .join("");
+    container.innerHTML = `<table class="data-table ${clickable ? "is-clickable" : ""}"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    $("thead", container).onclick = (e) => {
+      const th = e.target.closest("th[data-sort]");
+      if (!th) return;
+      const k = th.dataset.sort;
+      const cur = state.tableSort[sortKey];
+      state.tableSort[sortKey] = { key: k, dir: cur?.key === k && cur.dir === "desc" ? "asc" : "desc" };
+      renderTable(container, rows, columns, { rowKey, selected, clickable, id });
+    };
   }
 
-  function heatmapColor(t) {
-    // Same scale as old Plotly heatmap: red → yellow → green
+  /* ───────────────────────── Heatmap ───────────────────────── */
+
+  function heatColor(t) {
+    // Sequential "sea" ramp: light → deep. Reads well and works for colour-blind users.
     const stops = [
-      [0, [215, 48, 39]], // #d73027
-      [0.5, [254, 224, 139]], // #fee08b
-      [1, [26, 152, 80]], // #1a9850
+      [0, [230, 243, 246]],
+      [0.35, [124, 196, 214]],
+      [0.7, [14, 116, 144]],
+      [1, [8, 61, 77]],
     ];
     const x = Math.max(0, Math.min(1, t));
     let i = 0;
     while (i < stops.length - 2 && x > stops[i + 1][0]) i += 1;
     const [aT, aC] = stops[i];
     const [bT, bC] = stops[i + 1];
-    const u = bT === aT ? 0 : (x - aT) / (bT - aT);
-    const r = Math.round(aC[0] + (bC[0] - aC[0]) * u);
-    const g = Math.round(aC[1] + (bC[1] - aC[1]) * u);
-    const b = Math.round(aC[2] + (bC[2] - aC[2]) * u);
-    return `rgb(${r},${g},${b})`;
+    const u = (x - aT) / (bT - aT || 1);
+    const rgb = aC.map((v, k) => Math.round(v + (bC[k] - v) * u));
+    return { bg: `rgb(${rgb.join(",")})`, fg: x > 0.55 ? "#fff" : "#16181d" };
   }
 
   function renderHeatmap(container, data) {
-    container.classList.remove("skeleton", "skeleton-chart");
+    clearSkeleton(container);
     const { objects = [], display = [], months = [], month_keys = [], z = [] } = data;
-    if (!months.length || !display.length) {
-      container.innerHTML = '<div class="empty">Нет данных</div>';
-      return;
-    }
-    const nonzero = [];
-    for (const row of z) for (const v of row) if (v > 0) nonzero.push(v);
-    nonzero.sort((a, b) => a - b);
-    const q = (p) => {
-      if (!nonzero.length) return 1;
-      const idx = Math.min(nonzero.length - 1, Math.max(0, Math.floor((nonzero.length - 1) * p)));
-      return nonzero[idx];
-    };
+    if (!months.length || !display.length) return emptyState(container, "Нет данных", "Попробуйте ослабить фильтры");
+    const nonzero = z.flat().filter((v) => v > 0).sort((a, b) => a - b);
+    const q = (p) => nonzero[Math.min(nonzero.length - 1, Math.max(0, Math.floor((nonzero.length - 1) * p)))] ?? 1;
     let zmin = q(0.05);
     let zmax = q(0.95);
     if (zmax <= zmin) {
@@ -397,68 +564,160 @@
       zmax = nonzero[nonzero.length - 1] || 1;
     }
     const span = zmax - zmin || 1;
-    const head = `<tr><th class="row-label">Объект</th>${months.map((m) => `<th>${escapeHtml(m)}</th>`).join("")}</tr>`;
+    const head = `<tr><th class="row-label">Комплекс</th>${months.map((m) => `<th>${escapeHtml(m)}</th>`).join("")}</tr>`;
     const body = display
       .map((name, i) => {
         const obj = objects[i] || String(name).replace(/\s\(\d+\)$/, "");
+        const total = (z[i] || []).reduce((s, v) => s + (Number(v) || 0), 0);
         const cells = (z[i] || [])
           .map((v, j) => {
             const vv = Number(v) || 0;
-            const monthKey = month_keys[j] || months[j];
-            const monthLabel = months[j];
-            if (vv <= 0) {
-              return `<td class="hm-zero" data-object="${escapeHtml(obj)}" data-month="${escapeHtml(monthKey)}" data-month-label="${escapeHtml(monthLabel)}" title="${escapeHtml(obj)} · ${escapeHtml(monthLabel)}"></td>`;
-            }
-            const t = Math.max(0, Math.min(1, (vv - zmin) / span));
-            return `<td style="background:${heatmapColor(t)};color:#111" data-object="${escapeHtml(obj)}" data-month="${escapeHtml(monthKey)}" data-month-label="${escapeHtml(monthLabel)}" title="${escapeHtml(obj)} · ${escapeHtml(monthLabel)}: ${vv}">${vv}</td>`;
+            const attrs = `data-object="${escapeHtml(obj)}" data-month="${escapeHtml(month_keys[j] || months[j])}" title="${escapeHtml(obj)} · ${escapeHtml(months[j])}: ${vv}"`;
+            if (vv <= 0) return `<td class="hm-zero" ${attrs}></td>`;
+            const { bg, fg } = heatColor((vv - zmin) / span);
+            return `<td style="background:${bg};color:${fg}" ${attrs}>${vv}</td>`;
           })
           .join("");
-        return `<tr><th class="row-label" title="${escapeHtml(name)}">${escapeHtml(name)}</th>${cells}</tr>`;
+        return `<tr><th class="row-label" title="${escapeHtml(obj)}">${escapeHtml(obj)}<span class="tot">${nf0.format(total)}</span></th>${cells}</tr>`;
       })
       .join("");
     container.innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
   }
 
-  function fmt(v) {
-    if (v === null || v === undefined) return "—";
-    if (typeof v === "number") return v.toLocaleString("ru-RU");
-    return String(v);
-  }
+  /* ───────────────────────── Filters UI ───────────────────────── */
 
-  function escapeHtml(s) {
-    return String(s)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;");
-  }
-
-  function optionHtml(options, selected, { multi = false, emptyLabel = null } = {}) {
-    const sel = multi ? new Set(selected || []) : selected;
-    let html = "";
-    if (emptyLabel != null && !multi) {
-      html += `<option value="">${escapeHtml(emptyLabel)}</option>`;
-    }
+  function optionHtml(options, selected, { emptyLabel = null } = {}) {
+    let html = emptyLabel != null ? `<option value="">${escapeHtml(emptyLabel)}</option>` : "";
     for (const o of options || []) {
-      const isSel = multi ? sel.has(o.value) : String(sel) === String(o.value);
+      const isSel = String(selected ?? "") === String(o.value);
       html += `<option value="${escapeHtml(o.value)}" ${isSel ? "selected" : ""}>${escapeHtml(o.label)}</option>`;
     }
     return html;
   }
 
-  function renderTabs() {
-    const nav = $("#tabs");
-    const items = [...PUBLIC_TABS];
-    if (state.tab === "tab_egrz" || HIDDEN_TABS[state.tab]) {
-      const id = state.tab;
-      if (!items.find((x) => x[0] === id)) items.push([id, HIDDEN_TABS[id] || id]);
+  function isSet(name, value) {
+    const def = DEFAULT_FILTERS[name];
+    if (Array.isArray(value)) return value.length > 0;
+    if (name === "year") return false;
+    if (name === "source" && state.meta?.sources?.default) return value !== state.meta.sources.default;
+    return value !== "" && value !== null && value !== undefined && String(value) !== String(def ?? "");
+  }
+
+  function filterSelect(name, label, options, value, { emptyLabel = null } = {}) {
+    return `<div class="filter ${isSet(name, value) ? "is-set" : ""}"><label for="f-${name}">${escapeHtml(label)}</label><select id="f-${name}" data-filter="${name}">${optionHtml(options, value, { emptyLabel })}</select></div>`;
+  }
+
+  function filterInput(name, label, type, value, attrs = "") {
+    return `<div class="filter ${isSet(name, value) ? "is-set" : ""}"><label for="f-${name}">${escapeHtml(label)}</label><input id="f-${name}" type="${type}" data-filter="${name}" value="${escapeHtml(value ?? "")}" ${attrs}></div>`;
+  }
+
+  function filterMulti(name, label, options, value, { max = null, wide = false } = {}) {
+    state.msOptions[name] = { options: options || [], max };
+    const selected = value || [];
+    const labelOf = (v) => (options || []).find((o) => String(o.value) === String(v))?.label ?? v;
+    const text = selected.length
+      ? selected.length === 1
+        ? labelOf(selected[0])
+        : `${labelOf(selected[0])} и ещё ${selected.length - 1}`
+      : "Все";
+    return `<div class="filter ms ${wide ? "filter--wide" : ""} ${selected.length ? "is-set" : ""}" data-ms="${name}">
+      <span class="filter-label">${escapeHtml(label)}</span>
+      <button type="button" class="ms-trigger" aria-haspopup="listbox" aria-expanded="false">
+        <span class="ms-trigger-text ${selected.length ? "" : "is-placeholder"}">${escapeHtml(text)}</span>
+        ${selected.length > 1 ? `<span class="ms-count">${selected.length}</span>` : ""}
+        <span class="ms-caret">▾</span>
+      </button>
+    </div>`;
+  }
+
+  /* Multi-select popover: search, checkboxes, apply on close. */
+  let openMs = null;
+
+  function closeMs({ apply = true } = {}) {
+    if (!openMs) return;
+    const { name, draft, initial, root } = openMs;
+    root.querySelector(".ms-pop")?.remove();
+    root.querySelector(".ms-trigger")?.setAttribute("aria-expanded", "false");
+    openMs = null;
+    const changed = draft.length !== initial.length || draft.some((v) => !initial.includes(v));
+    if (apply && changed) {
+      state.filters[name] = draft;
+      onFilterValueChanged(name);
     }
-    nav.innerHTML = items
-      .map(
-        ([id, label]) =>
-          `<button type="button" class="tab ${state.tab === id ? "is-active" : ""}" data-tab="${id}">${label}</button>`
-      )
-      .join("");
+  }
+
+  function openMultiSelect(root) {
+    const name = root.dataset.ms;
+    if (openMs?.name === name) return closeMs();
+    closeMs();
+    const { options, max } = state.msOptions[name] || { options: [] };
+    const initial = [...(state.filters[name] || [])];
+    openMs = { name, draft: [...initial], initial, root };
+    const pop = document.createElement("div");
+    pop.className = "ms-pop";
+    pop.innerHTML = `
+      ${options.length > 8 ? '<input type="search" class="ms-search" placeholder="Поиск…" autocomplete="off">' : ""}
+      <div class="ms-list" role="listbox" aria-multiselectable="true"></div>
+      <div class="ms-actions">
+        <button type="button" class="btn" data-ms-act="clear">Очистить</button>
+        <button type="button" class="btn btn--primary" data-ms-act="apply">Готово</button>
+      </div>`;
+    root.appendChild(pop);
+    root.querySelector(".ms-trigger").setAttribute("aria-expanded", "true");
+    const list = pop.querySelector(".ms-list");
+
+    const draw = (query = "") => {
+      const qn = query.trim().toLowerCase().replaceAll("ё", "е");
+      const sel = new Set(openMs.draft.map(String));
+      // selected first, then the rest
+      const filtered = options.filter((o) => !qn || String(o.label).toLowerCase().replaceAll("ё", "е").includes(qn));
+      const ordered = [...filtered.filter((o) => sel.has(String(o.value))), ...filtered.filter((o) => !sel.has(String(o.value)))];
+      if (!ordered.length) {
+        list.innerHTML = '<div class="ms-empty">Ничего не найдено</div>';
+        return;
+      }
+      list.innerHTML = ordered
+        .slice(0, 400)
+        .map(
+          (o) =>
+            `<label class="ms-item"><input type="checkbox" value="${escapeHtml(o.value)}" ${sel.has(String(o.value)) ? "checked" : ""}><span title="${escapeHtml(o.label)}">${escapeHtml(o.label)}</span></label>`
+        )
+        .join("");
+    };
+    draw();
+
+    pop.addEventListener("input", (e) => {
+      if (e.target.classList.contains("ms-search")) draw(e.target.value);
+    });
+    pop.addEventListener("change", (e) => {
+      const cb = e.target.closest('input[type="checkbox"]');
+      if (!cb) return;
+      const v = cb.value;
+      if (cb.checked) {
+        if (max && openMs.draft.length >= max) {
+          cb.checked = false;
+          toast(`Можно выбрать не больше ${max}`);
+          return;
+        }
+        openMs.draft.push(v);
+      } else {
+        openMs.draft = openMs.draft.filter((x) => String(x) !== v);
+      }
+    });
+    pop.addEventListener("click", (e) => {
+      const act = e.target.closest("[data-ms-act]")?.dataset.msAct;
+      if (act === "clear") {
+        openMs.draft = [];
+        draw(pop.querySelector(".ms-search")?.value || "");
+      } else if (act === "apply") {
+        closeMs();
+      }
+    });
+    pop.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeMs({ apply: false });
+      if (e.key === "Enter" && e.target.classList.contains("ms-search")) closeMs();
+    });
+    (pop.querySelector(".ms-search") || pop.querySelector("input"))?.focus();
   }
 
   function commonFilterBlocks() {
@@ -467,66 +726,80 @@
     const f = state.filters;
     const years = (meta.years || []).map((y) => ({ label: String(y), value: y }));
     const sources = meta.sources?.options || [];
-    const showSource = meta.sources?.show !== false && sources.length > 1;
     const blocks = [];
-    if (showSource) {
-      blocks.push(filterSelect("source", "Источник", sources, f.source));
-    }
+    if (meta.sources?.show !== false && sources.length > 1) blocks.push(filterSelect("source", "Источник", sources, f.source));
     blocks.push(
-      filterSelect("agglomeration", "Агломерация", [
-        { label: "Все", value: "all" },
-        { label: "Анапа", value: "Анапа" },
-        { label: "Сочи", value: "Сочи" },
-        { label: "Крым", value: "Крым" },
-        { label: "Без групп", value: "без групп" },
-      ], f.agglomeration)
+      filterSelect(
+        "agglomeration",
+        "Агломерация",
+        [
+          { label: "Все", value: "all" },
+          { label: "Анапа", value: "Анапа" },
+          { label: "Сочи", value: "Сочи" },
+          { label: "Крым", value: "Крым" },
+          { label: "Без групп", value: "без групп" },
+        ],
+        f.agglomeration
+      )
     );
-    blocks.push(`<div class="filter"><label>С даты</label><input type="date" data-filter="date_from" value="${escapeHtml(f.date_from || "")}"></div>`);
-    blocks.push(`<div class="filter"><label>По дату</label><input type="date" data-filter="date_to" value="${escapeHtml(f.date_to || "")}"></div>`);
     blocks.push(filterSelect("year", "Год", years, f.year, { emptyLabel: "Все годы" }));
-    blocks.push(filterMulti("months", "Месяцы", dims.months || [], f.months));
-    blocks.push(`<div class="filter"><label>Бюджет от, млн</label><input type="number" min="0" step="0.5" data-filter="budget_min" value="${escapeHtml(f.budget_min || "")}" placeholder="без мин."></div>`);
-    blocks.push(`<div class="filter"><label>Бюджет до, млн</label><input type="number" min="0" step="0.5" data-filter="budget_max" value="${escapeHtml(f.budget_max || "")}" placeholder="напр. 10"></div>`);
+    blocks.push(filterMulti("months", "Месяцы", (dims.months || []).map((o) => ({ ...o, label: monthLabelFull(o.value) })), f.months));
+    blocks.push(filterInput("date_from", "С даты", "date", f.date_from, minMaxAttrs()));
+    blocks.push(filterInput("date_to", "По дату", "date", f.date_to, minMaxAttrs()));
+    blocks.push(filterInput("budget_min", "Бюджет от, млн ₽", "number", f.budget_min, 'min="0" step="0.5" placeholder="0"'));
+    blocks.push(filterInput("budget_max", "Бюджет до, млн ₽", "number", f.budget_max, 'min="0" step="0.5" placeholder="∞"'));
     blocks.push(filterMulti("city", "Город", dims.city || [], f.city));
     blocks.push(
-      filterSelect("mortgage_mode", "Ипотека", [
-        { label: "Все", value: "all" },
-        { label: "Ипотека", value: "mortgage" },
-        { label: "Не ипотека", value: "non_mortgage" },
-      ], f.mortgage_mode)
+      filterSelect(
+        "mortgage_mode",
+        "Оплата",
+        [
+          { label: "Все сделки", value: "all" },
+          { label: "Ипотека", value: "mortgage" },
+          { label: "Без ипотеки", value: "non_mortgage" },
+        ],
+        f.mortgage_mode
+      )
     );
     return blocks;
+  }
+
+  function monthLabelFull(key) {
+    const m = /^(\d{4})-(\d{2})/.exec(String(key || ""));
+    return m ? `${MONTHS_RU_FULL[Number(m[2]) - 1]} ${m[1]}` : String(key);
+  }
+
+  function minMaxAttrs() {
+    const b = state.meta?.date_bounds || {};
+    return `${b.min ? `min="${b.min}"` : ""} ${b.max ? `max="${b.max}"` : ""}`;
   }
 
   function renderFilters() {
     const dims = state.dims || {};
     const f = state.filters;
-    const topFilters = $("#filters");
-    const sideFilters = $("#heatmap-filters");
+    const card = $("#filters-card");
+    const top = $("#filters");
+    const side = $("#heatmap-filters");
+    state.msOptions = {};
 
     if (state.tab === "tab_heatmap") {
-      topFilters.style.display = "none";
-      topFilters.innerHTML = "";
+      card.hidden = true;
+      top.innerHTML = "";
       const blocks = commonFilterBlocks();
       blocks.push(filterMulti("district", "Район", dims.district || [], f.district));
       blocks.push(filterMulti("type_lot", "Тип объекта", dims.type_lot || [], f.type_lot));
       const dq = new Set(f.data_quality || []);
-      blocks.push(`<div class="filter"><label>Качество данных</label>
-        <label class="muted" style="display:flex;gap:6px;align-items:center;margin-top:4px">
-          <input type="checkbox" data-quality="exclude_wholesale" ${dq.has("exclude_wholesale") ? "checked" : ""}> Исключать оптовые
-        </label>
-        <label class="muted" style="display:flex;gap:6px;align-items:center;margin-top:4px">
-          <input type="checkbox" data-quality="known_budget_only" ${dq.has("known_budget_only") ? "checked" : ""}> Только с бюджетом
-        </label>
+      blocks.push(`<div class="filter"><span class="filter-label">Качество данных</span>
+        <label class="check"><input type="checkbox" data-quality="exclude_wholesale" ${dq.has("exclude_wholesale") ? "checked" : ""}> Без оптовых сделок</label>
+        <label class="check"><input type="checkbox" data-quality="known_budget_only" ${dq.has("known_budget_only") ? "checked" : ""}> Только с известным бюджетом</label>
       </div>`);
-      blocks.push(`<div class="filter"><label>Топ комплексов</label><input type="number" min="10" max="100" step="5" data-filter="top_n" value="${escapeHtml(f.top_n)}"></div>`);
-      blocks.push(`<p class="muted" style="margin:0;font-size:12px">Цветовая шкала обрезает экстремумы (квантили), чтобы середина читалась лучше.</p>`);
-      sideFilters.innerHTML = `<h2 class="widget-title">Фильтры (Теплокарта)</h2><div class="filters-stack">${blocks.join("")}</div>`;
+      blocks.push(filterInput("top_n", "Сколько комплексов показать", "number", f.top_n, 'min="5" max="200" step="5"'));
+      side.innerHTML = `<header class="widget-head"><div><h2 class="widget-title">Фильтры</h2></div><button type="button" class="btn btn--link" data-reset>Сбросить</button></header><div class="filters-stack">${blocks.join("")}</div>`;
       return;
     }
 
-    topFilters.style.display = "";
-    const blocks = commonFilterBlocks();
+    card.hidden = false;
+    let blocks = commonFilterBlocks();
     if (state.tab === "tab_deals") {
       blocks.push(filterMulti("developer", "Застройщик", dims.developer || [], f.developer));
       blocks.push(filterMulti("project", "Проект", dims.project || [], f.project));
@@ -538,229 +811,356 @@
       blocks.push(filterMulti("type_lot", "Тип", dims.type_lot || [], f.type_lot));
     } else if (state.tab === "tab_euler") {
       blocks.push(filterSelect("type_lot_single", "Тип", dims.type_lot || [], f.type_lot_single, { emptyLabel: "Все типы" }));
-      blocks.push(filterMulti("projects", "Проекты (до 3)", dims.project || [], f.projects));
-      blocks.push(`<div class="filter"><label>Целевой бюджет</label><input type="number" data-filter="target_budget" value="${escapeHtml(f.target_budget)}"></div>`);
-      blocks.push(`<div class="filter"><label>Коридор ±</label><input type="number" data-filter="delta_budget" value="${escapeHtml(f.delta_budget)}"></div>`);
+      blocks.push(filterMulti("projects", "Проекты (2–3)", dims.project || [], f.projects, { max: 3, wide: true }));
+      blocks.push(filterInput("target_budget", "Целевой бюджет, ₽", "number", f.target_budget, 'step="500000" min="0"'));
+      blocks.push(filterInput("delta_budget", "Коридор ±, ₽", "number", f.delta_budget, 'step="500000" min="0"'));
     } else if (state.tab === "tab_egrz") {
-      blocks.length = 0;
-      blocks.push(`<div class="filter filter--grow"><label>Поиск</label><input type="search" data-filter="search" value="${escapeHtml(f.search || "")}" placeholder="Объект, застройщик, РНС…"></div>`);
-      blocks.push(filterMulti("region", "Регион", state.egrzMeta?.regions || [], f.region));
-      blocks.push(filterMulti("work_type", "Вид работ", state.egrzMeta?.work_types || [], f.work_type));
-    } else if (state.tab === "tab_lot_growth" || state.tab === "tab_project_growth") {
+      blocks = [
+        `<div class="filter filter--wide"><label for="f-search">Поиск</label><input id="f-search" type="search" data-filter="search" value="${escapeHtml(f.search || "")}" placeholder="Объект, застройщик, номер заключения…"></div>`,
+        filterMulti("region", "Регион", state.egrzMeta?.regions || [], f.region),
+        filterMulti("work_type", "Вид работ", state.egrzMeta?.work_types || [], f.work_type),
+      ];
+    } else if (ADMIN_TABS.has(state.tab)) {
       blocks.push(filterMulti("district", "Район", dims.district || [], f.district));
       blocks.push(filterMulti("type_lot", "Тип", dims.type_lot || [], f.type_lot));
     }
-
-    topFilters.innerHTML = blocks.join("");
+    top.innerHTML = blocks.join("");
+    renderFiltersFoot();
   }
 
-  function filterSelect(name, label, options, value, { emptyLabel = null } = {}) {
-    return `<div class="filter"><label>${escapeHtml(label)}</label><select data-filter="${name}">${optionHtml(options, value, { emptyLabel })}</select></div>`;
+  function activeFilterCount() {
+    const f = state.filters;
+    let n = 0;
+    for (const k of ["agglomeration", "date_from", "date_to", "mortgage_mode", "budget_min", "budget_max", "object", "type_lot_single"]) {
+      if (isSet(k, f[k])) n += 1;
+    }
+    for (const k of ["months", "city", "developer", "project", "type_lot", "district"]) if ((f[k] || []).length) n += 1;
+    if (isSet("source", f.source)) n += 1;
+    return n;
   }
 
-  function filterMulti(name, label, options, value) {
-    const selected = value || [];
-    const summary = selected.length ? `${selected.length} выбрано` : "Все";
-    const chips = selected
-      .map((v) => `<option value="${escapeHtml(v)}" selected>${escapeHtml(v)}</option>`)
+  function periodText() {
+    const f = state.filters;
+    if (f.date_from || f.date_to) return `Период: ${f.date_from || "…"} — ${f.date_to || "…"}`;
+    if (f.year) return `Период: ${f.year} год${f.months?.length ? `, месяцев: ${f.months.length}` : ""}`;
+    return "Период: все годы";
+  }
+
+  function renderFiltersFoot() {
+    const foot = $("#filters-foot");
+    if (!foot) return;
+    if (state.tab === "tab_egrz") {
+      foot.innerHTML = "";
+      return;
+    }
+    const n = activeFilterCount();
+    foot.innerHTML = `<span>${escapeHtml(periodText())}</span><span class="spacer"></span>${
+      n ? `<span>Активных фильтров: ${n}</span><button type="button" class="btn btn--link" data-reset>Сбросить</button>` : ""
+    }`;
+  }
+
+  function resetFilters() {
+    const keep = { access: state.filters.access, line_shape: state.filters.line_shape };
+    state.filters = { ...structuredClone(DEFAULT_FILTERS), ...keep };
+    state.filters.year = state.meta?.default_year ?? null;
+    if (state.meta?.sources?.default) state.filters.source = state.meta.sources.default;
+    loadActiveTab({ refreshDims: true });
+  }
+
+  /* ───────────────────────── Tabs ───────────────────────── */
+
+  function renderTabs() {
+    const items = [...PUBLIC_TABS];
+    if (HIDDEN_TABS[state.tab] && !items.find((x) => x[0] === state.tab)) items.push([state.tab, HIDDEN_TABS[state.tab]]);
+    $("#tabs").innerHTML = items
+      .map(
+        ([id, label]) =>
+          `<button type="button" role="tab" aria-selected="${state.tab === id}" class="tab ${state.tab === id ? "is-active" : ""}" data-tab="${id}">${escapeHtml(label)}</button>`
+      )
       .join("");
-    const rest = (options || [])
-      .filter((o) => !selected.includes(o.value))
-      .map((o) => `<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`)
-      .join("");
-    return `<div class="filter filter--grow filter-multi-wrap">
-      <label>${escapeHtml(label)}</label>
-      <details class="filter-multi-details">
-        <summary>${escapeHtml(summary)}</summary>
-        <select multiple data-filter="${name}" data-multi="1" class="filter-multi-panel" size="8">${chips}${rest}</select>
-      </details>
-    </div>`;
   }
 
   function showPanel() {
     $$(".panel").forEach((p) => p.classList.toggle("is-active", p.dataset.panel === state.tab));
-    $$(".tab").forEach((t) => t.classList.toggle("is-active", t.dataset.tab === state.tab));
   }
+
+  function renderDataBadge() {
+    const max = state.meta?.date_bounds?.max;
+    const el = $("#data-badge");
+    if (!el || !max) return;
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(max);
+    if (!m) return;
+    el.textContent = `Данные по ${Number(m[3])} ${["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"][Number(m[2]) - 1]} ${m[1]}`;
+    el.hidden = false;
+  }
+
+  /* ───────────────────────── Loaders ───────────────────────── */
 
   async function loadMeta() {
     state.meta = await api("/api/meta");
-    if (state.filters.year == null && state.meta.default_year != null) {
-      state.filters.year = state.meta.default_year;
-    }
+    if (state.filters.year == null && state.meta.default_year != null) state.filters.year = state.meta.default_year;
     if ((!state.filters.source || state.filters.source === "all") && state.meta.sources?.default) {
       state.filters.source = state.meta.sources.default;
     }
+    renderDataBadge();
   }
 
   async function loadDimensions() {
     state.dims = await api("/api/dimensions");
   }
 
+  function deltaHtml(delta, { pp = false, invert = false } = {}) {
+    if (delta === null || delta === undefined) return "";
+    const v = Number(delta);
+    const good = invert ? v < 0 : v > 0;
+    const cls = Math.abs(v) < 0.5 ? "delta--flat" : good ? "delta--up" : "delta--down";
+    const arrow = Math.abs(v) < 0.5 ? "→" : v > 0 ? "↑" : "↓";
+    return `<span class="delta ${cls}">${arrow} ${nf1.format(Math.abs(v))}${pp ? " п.п." : "%"}</span>`;
+  }
+
+  function renderKpi(d) {
+    const set = (key, valueHtml, prevText, deltaOpts) => {
+      const card = $(`.kpi[data-kpi="${key}"]`);
+      if (!card) return;
+      const val = $(".kpi-value", card);
+      val.classList.remove("skeleton");
+      val.innerHTML = valueHtml;
+      const delta = deltaHtml(d[`${key}_delta`], deltaOpts);
+      $(".kpi-foot", card).innerHTML = d.has_prev && delta ? `${delta}<span>к прошлому году · ${escapeHtml(prevText)}</span>` : "";
+    };
+    const money = (v) => {
+      const c = compact(v);
+      return `${c.num}<small>${c.unit ? c.unit + " " : ""}₽</small>`;
+    };
+    set("total_deals", nf0.format(d.total_deals_raw ?? 0), nf0.format(d.total_deals_prev ?? 0));
+    set("sum_budget", money(d.sum_budget_raw), compactStr(d.sum_budget_prev));
+    set("avg_budget", d.avg_budget_raw ? money(d.avg_budget_raw) : "—", compactStr(d.avg_budget_prev));
+    set("median_budget", d.median_budget_raw ? money(d.median_budget_raw) : "—", compactStr(d.median_budget_prev));
+    set("avg_sqm", d.avg_sqm_raw ? money(d.avg_sqm_raw) : "—", compactStr(d.avg_sqm_prev));
+    set(
+      "mortgage_share",
+      d.mortgage_share_raw != null ? `${nf1.format(d.mortgage_share_raw)}<small>%</small>` : "—",
+      d.mortgage_share_prev != null ? `${nf1.format(d.mortgage_share_prev)}%` : "—",
+      { pp: true }
+    );
+  }
+
   async function loadDealsTab() {
     const tension = state.filters.line_shape === "spline" ? 0.35 : 0;
-    const kpiP = track((signal) => api("/api/deals/kpi", { signal }).then((d) => {
-      $("#w-kpi-deals .kpi-value").textContent = d.total_deals;
-      $("#w-kpi-sum .kpi-value").textContent = d.sum_budget;
-      $("#w-kpi-avg .kpi-value").textContent = d.avg_budget;
-      $$(".kpi-value").forEach((el) => el.classList.remove("skeleton", "skeleton-kpi"));
-    }));
-    const countsP = track((signal) => api("/api/deals/monthly-counts", { signal }).then((d) => {
-      lineChart(
-        "monthly-counts",
-        $("#chart-monthly-counts"),
-        d.labels,
-        [
-          { label: "Всего", data: d.total, borderColor: "#111", backgroundColor: "transparent" },
-          { label: "Ипотека", data: d.mortgage, borderColor: "#3d6ef5", backgroundColor: "transparent" },
-          { label: "Не ипотека", data: d.non_mortgage, borderColor: "#9aa3ab", backgroundColor: "transparent" },
-        ],
-        { tension }
-      );
-    }));
-    const avgP = track((signal) => api("/api/deals/monthly-avg", { signal }).then((d) => {
-      lineChart(
-        "monthly-avg",
-        $("#chart-monthly-avg"),
-        d.labels,
-        [{ label: "Средний бюджет", data: d.avg, borderColor: "#3d6ef5", backgroundColor: "transparent" }],
-        { tension }
-      );
-    }));
-    const topP = track((signal) => api("/api/deals/top-complexes", { signal }).then((d) => {
-      renderBarList($("#chart-top-total"), d.total || []);
-      renderBarList($("#chart-top-mortgage"), d.mortgage || []);
-    }));
-    await Promise.allSettled([kpiP, countsP, avgP, topP]);
+    $$("#line-style-toolbar .seg").forEach((b) => b.classList.toggle("is-active", b.dataset.shape === state.filters.line_shape));
+    const c = palette();
+    const kpiCards = $$(".kpi-value");
+    kpiCards.forEach((el) => el.classList.add("skeleton"));
+
+    const jobs = [
+      track((signal) => api("/api/deals/kpi", { signal }).then(renderKpi), []),
+      track(
+        (signal) =>
+          api("/api/deals/monthly-counts", { signal }).then((d) =>
+            lineChart(
+              "monthly-counts",
+              $("#chart-monthly-counts"),
+              d.labels,
+              [
+                { label: "Всего", data: d.total, borderColor: c.ink, backgroundColor: (ctx) => gradient(ctx, toHex(c.ink)), fill: true, borderWidth: 2.5 },
+                { label: "Ипотека", data: d.mortgage, borderColor: c.sea, backgroundColor: "transparent" },
+                { label: "Без ипотеки", data: d.non_mortgage, borderColor: c.sand, backgroundColor: "transparent", borderDash: [5, 4] },
+              ],
+              { tension }
+            )
+          ),
+        $("#chart-monthly-counts")
+      ),
+      track(
+        (signal) =>
+          api("/api/deals/monthly-avg", { signal }).then((d) =>
+            lineChart(
+              "monthly-avg",
+              $("#chart-monthly-avg"),
+              d.labels,
+              [{ label: "Средний чек", data: d.avg, borderColor: c.sea, backgroundColor: (ctx) => gradient(ctx, toHex(c.sea)), fill: true }],
+              { tension, money: true }
+            )
+          ),
+        $("#chart-monthly-avg")
+      ),
+      track(
+        (signal) =>
+          api("/api/deals/monthly-sqm", { signal }).then((d) =>
+            lineChart(
+              "monthly-sqm",
+              $("#chart-monthly-sqm"),
+              d.labels,
+              [{ label: "Медиана за м²", data: d.median, borderColor: c.sand, backgroundColor: (ctx) => gradient(ctx, toHex(c.sand)), fill: true }],
+              { tension, money: true }
+            )
+          ),
+        $("#chart-monthly-sqm")
+      ),
+      track(
+        (signal) =>
+          api("/api/deals/budget-buckets", { signal }).then((d) => {
+            const total = (d.values || []).reduce((s, v) => s + v, 0);
+            if (!total) return emptyState($("#chart-budget-buckets"), "Нет сделок с известным бюджетом");
+            barChart("budget-buckets", $("#chart-budget-buckets"), d.labels, d.values, { horizontal: false, tooltipSuffix: " сделок" });
+            const ch = state.charts["budget-buckets"];
+            if (ch) {
+              ch.options.plugins.tooltip.callbacks.label = (ctx) => ` ${nf0.format(ctx.parsed.y)} сделок · ${nf1.format(d.shares[ctx.dataIndex])}%`;
+              ch.update("none");
+            }
+          }),
+        $("#chart-budget-buckets")
+      ),
+      track(
+        (signal) =>
+          api("/api/deals/top-complexes", { signal }).then((d) => {
+            $("#top-total-sub").textContent = d.year ? `По числу сделок за ${d.year} год` : "По числу сделок за период";
+            if (d.message) {
+              emptyState($("#chart-top-total"), d.message);
+              emptyState($("#chart-top-mortgage"), d.message);
+              return;
+            }
+            renderBarList($("#chart-top-total"), d.total || []);
+            renderBarList($("#chart-top-mortgage"), d.mortgage || [], { variant: "bar-fill--sand" });
+          }),
+        [$("#chart-top-total"), $("#chart-top-mortgage")]
+      ),
+    ];
+    await Promise.allSettled(jobs);
+  }
+
+  function toHex(color) {
+    // Chart gradient helper needs a #rrggbb colour.
+    if (/^#[0-9a-f]{6}$/i.test(color)) return color;
+    const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(color);
+    if (!m) return "#0e7490";
+    return "#" + [m[1], m[2], m[3]].map((x) => Number(x).toString(16).padStart(2, "0")).join("");
   }
 
   async function loadComplexesTab() {
-    const cityP = track((signal) => api("/api/complexes/city-counts", { signal }).then((d) => {
-      barChart("city", $("#chart-city-counts"), d.labels, d.values);
-    }));
-    const monP = track((signal) => api("/api/complexes/monthly", { signal }).then((d) => {
-      if (!d.name) {
-        const el = $("#chart-complex-monthly");
-        el.classList.remove("skeleton", "skeleton-chart");
-        el.innerHTML = '<div class="empty">Выберите комплекс в фильтрах</div>';
-        return;
-      }
-      barChart("complex-monthly", $("#chart-complex-monthly"), d.labels, d.values, { horizontal: false });
-    }));
-    await Promise.allSettled([cityP, monP]);
+    const c = palette();
+    await Promise.allSettled([
+      track(
+        (signal) => api("/api/complexes/city-counts", { signal }).then((d) => barChart("city", $("#chart-city-counts"), d.labels, d.values, { tooltipSuffix: " сделок" })),
+        $("#chart-city-counts")
+      ),
+      track(
+        (signal) =>
+          api("/api/complexes/monthly", { signal }).then((d) => {
+            $("#complex-monthly-title").textContent = d.name ? `Продажи по месяцам: ${d.name}` : "Помесячные продажи комплекса";
+            if (!d.name) return emptyState($("#chart-complex-monthly"), "Комплекс не выбран", "Выберите его в фильтре «Комплекс»");
+            barChart("complex-monthly", $("#chart-complex-monthly"), d.labels, d.values, { horizontal: false, color: c.sea, monthAxis: true, tooltipSuffix: " сделок" });
+          }),
+        $("#chart-complex-monthly")
+      ),
+    ]);
+  }
+
+  function toggleSelected(name) {
+    const set = new Set(state.filters.selected);
+    if (set.has(name)) set.delete(name);
+    else set.add(name);
+    state.filters.selected = [...set];
+    writeUrl();
+    loadCompareTab();
   }
 
   async function loadCompareTab() {
     await track(async (signal) => {
       const d = await api("/api/compare", { signal });
-      scatterChart("compare", $("#chart-compare"), d.points || [], (name) => {
-        const set = new Set(state.filters.selected);
-        if (set.has(name)) set.delete(name);
-        else set.add(name);
-        state.filters.selected = [...set];
-        writeUrl();
-        loadCompareTab();
-      });
+      scatterChart("compare", $("#chart-compare"), d.points || [], toggleSelected);
       renderTable(
         $("#table-compare"),
         d.rows || [],
         [
           { key: "object", label: "Комплекс" },
           { key: "city", label: "Город" },
-          { key: "developer", label: "Девелопер" },
-          { key: "deals", label: "Сделок" },
-          { key: "avg_budget", label: "Средний бюджет" },
-          { key: "avg_price_sqm", label: "Цена м²" },
+          { key: "developer", label: "Застройщик" },
+          { key: "deals", label: "Сделок", num: true },
+          { key: "avg_budget", label: "Средний чек, ₽", money: true },
+          { key: "avg_price_sqm", label: "Цена м², ₽", money: true },
         ],
-        { selected: state.filters.selected }
+        { selected: state.filters.selected, clickable: true }
       );
       $("#table-compare").onclick = (e) => {
-        const tr = e.target.closest("tr[data-key]");
-        if (!tr) return;
-        const name = tr.dataset.key;
-        const set = new Set(state.filters.selected);
-        if (set.has(name)) set.delete(name);
-        else set.add(name);
-        state.filters.selected = [...set];
-        writeUrl();
-        loadCompareTab();
+        const tr = e.target.closest("tbody tr[data-key]");
+        if (tr) toggleSelected(tr.dataset.key);
       };
-    });
+    }, [$("#chart-compare"), $("#table-compare")]);
   }
 
   async function loadEulerTab() {
+    const el = $("#euler-summary");
     await track(async (signal) => {
       const d = await api("/api/euler", { signal });
-      const el = $("#euler-summary");
-      el.classList.remove("skeleton", "skeleton-chart");
+      clearSkeleton(el);
+      el.classList.remove("skeleton-block");
+      const band = `<p class="muted" style="margin:0">Коридор бюджета: <b>${compactStr(d.band?.lo)} – ${compactStr(d.band?.hi)} ₽</b></p>`;
       if (d.message) {
-        el.innerHTML = `<div class="empty">${escapeHtml(d.message)}</div>`;
+        el.innerHTML = `${band}<div class="empty"><strong>${escapeHtml(d.message)}</strong>Фильтр «Проекты» выше</div>`;
         return;
       }
       const boxes = (d.projects || [])
-        .map((p) => `<div class="euler-box">${escapeHtml(p)}<strong>${fmt(d.sizes?.[p] || 0)}</strong><span class="muted">в коридоре</span></div>`)
+        .map((p) => `<div class="euler-box"><div class="eb-name">${escapeHtml(p)}</div><strong>${fmt(d.sizes?.[p] || 0)}</strong><span class="muted">ценовых точек в коридоре</span></div>`)
         .join("");
       const pairs = Object.entries(d.pairs || {})
         .map(([k, v]) => {
           const [a, b] = k.split("||");
-          return `<div class="euler-box">${escapeHtml(a)} ∩ ${escapeHtml(b)}<strong>${fmt(v)}</strong></div>`;
+          const base = Math.min(d.sizes?.[a] || 0, d.sizes?.[b] || 0) || 1;
+          return `<div class="euler-box euler-box--pair"><div class="eb-name">${escapeHtml(a)} ∩ ${escapeHtml(b)}</div><strong>${fmt(v)}</strong><span class="muted">${nf0.format((v / base) * 100)}% от меньшего</span></div>`;
         })
         .join("");
       const triple =
         (d.projects || []).length === 3
-          ? `<div class="euler-box">Все три<strong>${fmt(d.triple || 0)}</strong></div>`
+          ? `<div class="euler-box euler-box--triple"><div class="eb-name">Все три</div><strong>${fmt(d.triple || 0)}</strong><span class="muted">общих точек</span></div>`
           : "";
-      el.innerHTML = `<p class="muted">Коридор бюджета: ${fmt(d.band?.lo)} – ${fmt(d.band?.hi)} ₽</p><div class="euler-boxes">${boxes}${pairs}${triple}</div>`;
-    });
+      el.innerHTML = `${band}<div class="euler-boxes">${boxes}${pairs}${triple}</div>`;
+    }, el);
   }
 
   async function loadHeatmapCellDetails(objectName, monthKey) {
     const titleEl = $("#heatmap-click-title");
+    const subEl = $("#heatmap-click-sub");
     const tableEl = $("#heatmap-click-table");
-    if (!titleEl || !tableEl) return;
-    titleEl.textContent = "Загрузка…";
-    tableEl.innerHTML = '<div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line"></div>';
+    titleEl.textContent = objectName;
+    subEl.textContent = "Загрузка…";
+    tableEl.innerHTML = '<div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line"></div>';
     try {
-      const q = filterQuery({ object: objectName, month: monthKey });
-      const res = await fetch(`/api/heatmap/details?${q}`, { credentials: "same-origin" });
-      if (res.status === 401) {
-        location.href = `/login?next=${encodeURIComponent(location.pathname + location.search)}`;
-        return;
-      }
-      const d = await res.json();
-      titleEl.textContent = d.title || "Сделки";
-      if (d.message && !(d.rows || []).length) {
-        tableEl.innerHTML = `<div class="empty">${escapeHtml(d.message)}</div>`;
-        return;
-      }
+      const d = await api("/api/heatmap/details", { extra: { object: objectName, month: monthKey } });
+      titleEl.textContent = objectName;
+      subEl.textContent = `${monthLabelFull(d.month || monthKey)} · ${nf0.format(d.total || 0)} сделок${(d.total || 0) > 300 ? " (показаны первые 300)" : ""}`;
+      if (!(d.rows || []).length) return emptyState(tableEl, d.message || "Сделок не найдено");
       renderTable(
         tableEl,
-        d.rows || [],
+        d.rows,
         [
           { key: "date", label: "Дата" },
-          { key: "budget", label: "Стоимость" },
+          { key: "budget", label: "Стоимость, ₽", money: true },
           { key: "status", label: "Статус" },
-          { key: "type_lot", label: "Тип объекта" },
-          { key: "source", label: "Регион" },
+          { key: "type_lot", label: "Тип" },
           { key: "city", label: "Город" },
           { key: "district", label: "Район" },
-          { key: "developer", label: "Девелопер" },
+          { key: "developer", label: "Застройщик" },
+          { key: "source", label: "Источник" },
         ],
         { rowKey: "date" }
       );
+      $("#heatmap-details").scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (err) {
-      titleEl.textContent = "Не удалось загрузить сделки";
-      tableEl.innerHTML = `<div class="empty">${escapeHtml(err.message || String(err))}</div>`;
+      if (err.message === "unauthorized") return;
+      subEl.textContent = "";
+      tableEl.innerHTML = `<div class="error-box">Не удалось загрузить сделки: ${escapeHtml(err.message)}</div>`;
     }
   }
 
   async function loadHeatmapTab() {
-    const titleEl = $("#heatmap-click-title");
-    const tableEl = $("#heatmap-click-table");
-    if (titleEl) titleEl.textContent = "Кликните по ячейке, чтобы увидеть сделки.";
-    if (tableEl) tableEl.innerHTML = "";
+    $("#heatmap-click-title").textContent = "Сделки по ячейке";
+    $("#heatmap-click-sub").textContent = "Кликните по ячейке теплокарты";
+    $("#heatmap-click-table").innerHTML = "";
+    const root = $("#heatmap");
+    setLoading(root);
     await track(async (signal) => {
       const d = await api("/api/heatmap", { signal });
-      const root = $("#heatmap");
       renderHeatmap(root, d);
       root.onclick = (e) => {
         const cell = e.target.closest("td[data-object][data-month]");
@@ -769,100 +1169,96 @@
         cell.classList.add("is-active");
         loadHeatmapCellDetails(cell.dataset.object, cell.dataset.month);
       };
-    });
+    }, root);
   }
 
   async function loadEgrzTab() {
+    const el = $("#table-egrz");
     await track(async (signal) => {
       const d = await api("/api/egrz", { signal });
       state.egrzMeta = { regions: d.regions || [], work_types: d.work_types || [] };
       renderFilters();
-      const el = $("#table-egrz");
-      if (d.message) {
-        el.classList.remove("skeleton", "skeleton-chart");
-        el.innerHTML = `<div class="empty">${escapeHtml(d.message)}</div>`;
-        return;
-      }
+      if (d.message) return emptyState(el, d.message);
+      $("#egrz-title").textContent = `ЕГРЗ · ${fmt(d.total)} записей${d.total > 500 ? " (показаны 500)" : ""}`;
       renderTable(
         el,
         d.rows || [],
         [
           { key: "date", label: "Дата" },
-          { key: "rns", label: "РНС" },
+          { key: "rns", label: "Номер заключения" },
           { key: "city", label: "Город" },
-          { key: "object", label: "Объект" },
-          { key: "developer", label: "Застройщик" },
+          { key: "object", label: "Объект", wrap: true },
+          { key: "developer", label: "Застройщик", wrap: true },
           { key: "work_type", label: "Вид работ" },
           { key: "keys", label: "Ключи" },
         ],
         { rowKey: "rns" }
       );
-      const title = el.previousElementSibling;
-      if (title) title.textContent = `ЕГРЗ · ${fmt(d.total)} записей`;
-    });
+    }, el);
   }
 
   async function loadLotGrowthTab() {
+    const c = palette();
     await track(async (signal) => {
       const d = await api("/api/lot-growth", { signal });
-      const s = d.series || {};
+      const s = Array.isArray(d.series) ? {} : d.series || {};
       lineChart(
         "lot-growth",
         $("#chart-lot-growth"),
         s.labels || [],
         [
-          { label: "Средний бюджет", data: s.avg_budget || [], borderColor: "#3d6ef5", backgroundColor: "transparent", yAxisID: "y" },
-          { label: "Сделок", data: s.deals || [], borderColor: "#111", backgroundColor: "transparent", yAxisID: "y1" },
-        ]
+          { label: "Средний чек", data: s.avg_budget || [], borderColor: c.sea, backgroundColor: "transparent", yAxisID: "y" },
+          { label: "Сделок", data: s.deals || [], borderColor: c.sand, backgroundColor: "transparent", yAxisID: "y1", borderDash: [5, 4] },
+        ],
+        { money: true, y1: true }
       );
-      renderTable($("#table-lot-growth"), d.rows || [], [
-        { key: "month", label: "Месяц" },
-        { key: "deals", label: "Сделок" },
-        { key: "avg_budget", label: "Средний бюджет" },
-        { key: "avg_sqm", label: "Цена м²" },
-      ], { rowKey: "month" });
-    });
+      renderTable(
+        $("#table-lot-growth"),
+        (d.rows || []).map((r) => ({ ...r, month: monthLabelFull(r.month) })),
+        [
+          { key: "month", label: "Месяц" },
+          { key: "deals", label: "Сделок", num: true },
+          { key: "avg_budget", label: "Средний чек, ₽", money: true },
+          { key: "avg_sqm", label: "Цена м², ₽", money: true },
+        ],
+        { rowKey: "month" }
+      );
+    }, [$("#chart-lot-growth"), $("#table-lot-growth")]);
   }
 
   async function loadProjectGrowthTab() {
     await track(async (signal) => {
       const d = await api("/api/project-growth", { signal });
-      renderBarList($("#chart-pg-budget"), d.budget_pct || []);
-      renderBarList($("#chart-pg-sqm"), d.sqm_pct || []);
+      renderBarList($("#chart-pg-budget"), d.budget_pct || [], { suffix: "%" });
+      renderBarList($("#chart-pg-sqm"), d.sqm_pct || [], { suffix: "%", variant: "bar-fill--sand" });
       renderTable($("#table-pg"), d.rows || [], [
         { key: "object", label: "Проект" },
         { key: "city", label: "Город" },
-        { key: "deals", label: "Сделок" },
-        { key: "budget_growth_pct", label: "Рост бюджета %" },
-        { key: "sqm_growth_pct", label: "Рост м² %" },
+        { key: "deals", label: "Сделок", num: true },
+        { key: "budget_growth_pct", label: "Рост бюджета, %", num: true, render: (v) => (v == null ? "—" : nf1.format(v)) },
+        { key: "sqm_growth_pct", label: "Рост м², %", num: true, render: (v) => (v == null ? "—" : nf1.format(v)) },
       ]);
-    });
+    }, [$("#chart-pg-budget"), $("#chart-pg-sqm"), $("#table-pg")]);
   }
 
   async function loadActiveTab({ refreshDims = true } = {}) {
     abortAll();
+    closeMs({ apply: false });
     showPanel();
     renderTabs();
     if (refreshDims && state.tab !== "tab_egrz") {
       try {
         await loadDimensions();
-      } catch (_) {
-        /* ignore */
+      } catch (err) {
+        if (err.message !== "unauthorized") toast("Не удалось обновить списки фильтров");
       }
     }
     renderFilters();
     writeUrl();
 
     if (ADMIN_TABS.has(state.tab) && !state.filters.access) {
-      const msg = '<div class="empty">Нужен параметр access в ссылке</div>';
-      if (state.tab === "tab_lot_growth") {
-        $("#chart-lot-growth").innerHTML = msg;
-        $("#table-lot-growth").innerHTML = msg;
-      } else {
-        $("#chart-pg-budget").innerHTML = msg;
-        $("#chart-pg-sqm").innerHTML = msg;
-        $("#table-pg").innerHTML = msg;
-      }
+      const ids = state.tab === "tab_lot_growth" ? ["#chart-lot-growth", "#table-lot-growth"] : ["#chart-pg-budget", "#chart-pg-sqm", "#table-pg"];
+      ids.forEach((id) => emptyState($(id), "Раздел закрыт", "Нужна ссылка с ключом доступа"));
       return;
     }
 
@@ -876,54 +1272,93 @@
       tab_lot_growth: loadLotGrowthTab,
       tab_project_growth: loadProjectGrowthTab,
     };
-    const fn = loaders[state.tab];
-    if (fn) await fn();
-    state.loadedTabs.add(state.tab);
+    await ensureChartJs();
+    applyChartDefaults();
+    await loaders[state.tab]?.();
+  }
+
+  /* ───────────────────────── Events ───────────────────────── */
+
+  const RELOAD_DIMS = new Set(["source", "agglomeration", "year", "date_from", "date_to", "developer"]);
+
+  function onFilterValueChanged(key) {
+    if (key === "developer") state.filters.project = [];
+    if (key === "date_from" || key === "date_to") {
+      const { date_from: a, date_to: b } = state.filters;
+      if (a && b && a > b) {
+        toast("Дата начала позже даты конца — поменял местами");
+        state.filters.date_from = b;
+        state.filters.date_to = a;
+      }
+    }
+    loadActiveTab({ refreshDims: RELOAD_DIMS.has(key) });
   }
 
   function bindEvents() {
     $("#tabs").addEventListener("click", (e) => {
       const btn = e.target.closest("[data-tab]");
-      if (!btn) return;
+      if (!btn || btn.dataset.tab === state.tab) return;
       state.tab = btn.dataset.tab;
       state.filters.selected = [];
       loadActiveTab();
+      window.scrollTo({ top: 0, behavior: "smooth" });
     });
 
-    const onFilterChange = (e) => {
+    const onChange = (e) => {
       const quality = e.target.closest("[data-quality]");
       if (quality) {
-        const flags = [...document.querySelectorAll("[data-quality]:checked")].map((x) => x.dataset.quality);
-        state.filters.data_quality = flags;
+        state.filters.data_quality = $$("[data-quality]:checked").map((x) => x.dataset.quality);
         loadActiveTab({ refreshDims: false });
         return;
       }
       const el = e.target.closest("[data-filter]");
       if (!el) return;
       const key = el.dataset.filter;
-      if (el.dataset.multi) {
-        state.filters[key] = [...el.selectedOptions].map((o) => o.value);
-      } else if (el.type === "number") {
-        state.filters[key] = el.value === "" ? "" : Number(el.value);
-      } else {
-        state.filters[key] = el.value;
-      }
-      if (key === "developer") state.filters.project = [];
-      if (["source", "agglomeration", "year", "date_from", "date_to", "developer"].includes(key)) {
-        loadActiveTab({ refreshDims: true });
-      } else {
-        loadActiveTab({ refreshDims: false });
-      }
+      state.filters[key] = el.type === "number" ? (el.value === "" ? "" : Number(el.value)) : el.value;
+      if (key === "year") state.filters.year = el.value === "" ? null : Number(el.value);
+      onFilterValueChanged(key);
     };
-    $("#filters").addEventListener("change", onFilterChange);
-    $("#heatmap-filters")?.addEventListener("change", onFilterChange);
+
+    const onClick = (e) => {
+      if (e.target.closest("[data-reset]")) return resetFilters();
+      const trigger = e.target.closest(".ms-trigger");
+      if (trigger) openMultiSelect(trigger.closest("[data-ms]"));
+    };
+
+    for (const root of [$("#filters-card"), $("#heatmap-filters")]) {
+      root?.addEventListener("change", onChange);
+      root?.addEventListener("click", onClick);
+    }
+
+    // Search in EGRZ reacts while typing (debounced), not only on blur.
+    let searchTimer;
+    $("#filters").addEventListener("input", (e) => {
+      if (e.target.dataset.filter !== "search") return;
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        state.filters.search = e.target.value;
+        loadEgrzTab();
+        writeUrl();
+      }, 350);
+    });
+
+    document.addEventListener("mousedown", (e) => {
+      if (openMs && !openMs.root.contains(e.target)) closeMs();
+    });
 
     $("#line-style-toolbar")?.addEventListener("click", (e) => {
       const btn = e.target.closest("[data-shape]");
       if (!btn) return;
       state.filters.line_shape = btn.dataset.shape;
-      $$("#line-style-toolbar .btn").forEach((b) => b.classList.toggle("is-active", b === btn));
-      loadDealsTab();
+      const tension = btn.dataset.shape === "spline" ? 0.35 : 0;
+      $$("#line-style-toolbar .seg").forEach((b) => b.classList.toggle("is-active", b === btn));
+      for (const key of ["monthly-counts", "monthly-avg", "monthly-sqm"]) {
+        const ch = state.charts[key];
+        if (ch) {
+          ch.options.elements.line.tension = tension;
+          ch.update();
+        }
+      }
       writeUrl();
     });
 
@@ -940,13 +1375,12 @@
     showPanel();
     bindEvents();
     try {
-      await api("/api/me");
       await loadMeta();
       await loadActiveTab({ refreshDims: true });
     } catch (err) {
       if (String(err.message) !== "unauthorized") {
         console.error(err);
-        $("#filters").innerHTML = `<div class="empty">Не удалось загрузить данные: ${escapeHtml(err.message)}</div>`;
+        $("#filters").innerHTML = `<div class="error-box" style="grid-column:1/-1">Не удалось загрузить данные: ${escapeHtml(err.message)}</div>`;
       }
     }
   }

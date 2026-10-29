@@ -97,6 +97,19 @@ def slice_by_period(dff: pl.DataFrame, year: object, date_from: object, date_to:
     return dff
 
 
+def _int(value: object, default: int, *, lo: int | None = None, hi: int | None = None) -> int:
+    """Parse an int query param without ever raising (bad input → default)."""
+    try:
+        n = int(float(str(value).replace(" ", "").replace(",", ".")))
+    except (TypeError, ValueError):
+        return default
+    if lo is not None:
+        n = max(lo, n)
+    if hi is not None:
+        n = min(hi, n)
+    return n
+
+
 def args_from_request(req: Request) -> dict[str, Any]:
     g = req.args.get
     return {
@@ -118,12 +131,12 @@ def args_from_request(req: Request) -> dict[str, Any]:
         "sold_month": (g("sold_month") or "").strip() or None,
         "district": multi(g("district")),
         "selected": multi(g("selected")),
-        "top_n": int(g("top_n") or 40),
+        "top_n": _int(g("top_n"), 40, lo=5, hi=200),
         "line_shape": g("line_shape") or "linear",
         "data_quality": multi(g("data_quality")),
         "h_source": g("h_source") or "deals",
-        "target_budget": int(g("target_budget") or 8_000_000),
-        "delta_budget": int(g("delta_budget") or 3_000_000),
+        "target_budget": _int(g("target_budget"), 8_000_000, lo=0),
+        "delta_budget": _int(g("delta_budget"), 3_000_000, lo=0),
         "type_lot_single": (g("type_lot_single") or "").strip() or None,
         "projects": multi(g("projects"))[:3],
         "search": (g("search") or "").strip() or None,

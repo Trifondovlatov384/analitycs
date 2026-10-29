@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 .DS_Store
 .git/
-output/
+output/mind_map.json
 scripts/
 data/sample_egrz.csv
 Реестр (общедоступные сведения).csv
