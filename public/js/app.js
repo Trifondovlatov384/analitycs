@@ -945,13 +945,20 @@
     $$(".panel").forEach((p) => p.classList.toggle("is-active", p.dataset.panel === state.tab));
   }
 
+  function shortDate(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || "");
+    if (!m) return "";
+    return `${Number(m[3])} ${["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"][Number(m[2]) - 1]} ${m[1]}`;
+  }
+
   function renderDataBadge() {
-    const max = state.meta?.date_bounds?.max;
     const el = $("#data-badge");
+    const max = state.meta?.date_bounds?.max;
     if (!el || !max) return;
-    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(max);
-    if (!m) return;
-    el.textContent = `Данные по ${Number(m[3])} ${["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"][Number(m[2]) - 1]} ${m[1]}`;
+    const per = state.meta?.source_bounds || [];
+    const lagging = per.filter((x) => x.max && (new Date(max) - new Date(x.max)) / 864e5 > 20 && new Date(x.max).getFullYear() >= new Date(max).getFullYear());
+    el.textContent = `Данные по ${shortDate(max)}${lagging.map((x) => ` · ${x.label} по ${shortDate(x.max)}`).join("")}`;
+    if (per.length > 1) el.title = per.map((x) => `${x.label}: ${shortDate(x.min)} — ${shortDate(x.max)}`).join("\n");
     el.hidden = false;
   }
 
@@ -1342,14 +1349,18 @@
       setKpi(P, "active", nf0.format(m.active), `<span>с продажами в окне</span>`);
       setKpi(P, "growing", nf0.format(m.growing), `<span>темп вырос на 20%+</span>`);
       setKpi(P, "slowing", nf0.format(m.slowing), `<span>темп упал на 20%+</span>`);
-      const win = monthsRange(d.cur_months);
-      $("#pace-sub").textContent = `Сделок в месяц, ${win}`;
-      $("#pace-table-sub").textContent = `${win} против ${monthsRange(d.prev_months)}`;
+      const many = (d.windows || []).length > 1;
+      const winText = (d.windows || []).map((w) => `${many ? w.region + ": " : ""}${monthsRange(w.cur_months)}`).join(" · ");
+      $("#pace-sub").textContent = `Сделок в месяц, ${winText}`;
+      $("#pace-table-sub").textContent =
+        (d.windows || []).map((w) => `${many ? w.region + ": " : ""}${monthsRange(w.cur_months)} против ${monthsRange(w.prev_months)}`).join("; ") +
+        ". Неполный последний месяц выгрузки не учитывается";
       const c = palette();
       barChart("pace", $("#chart-pace"), d.top.map((x) => x.name), d.top.map((x) => x.value), { color: c.sea, tooltipSuffix: " сделок/мес" });
       const cols = [
         { key: "object", label: "Комплекс" },
         { key: "city", label: "Город" },
+        ...(many ? [{ key: "region", label: "Регион" }] : []),
         { key: "class", label: "Класс" },
         { key: "pace", label: "Темп, сд/мес", num: true, render: (v) => nf1.format(v) },
         { key: "pace_prev", label: "Было", num: true, render: (v) => nf1.format(v) },

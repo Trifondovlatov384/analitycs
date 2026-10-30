@@ -53,39 +53,77 @@ def _first_text(col: str) -> pl.Expr:
 # ───────────────────────── 1. Sales pace ─────────────────────────
 
 
+def region_expr() -> pl.Expr:
+    """Exports cover different periods: Crimea (bnMAP) and the Kuban files end on different dates."""
+    return pl.when(pl.col("source") == "crimea").then(pl.lit("crimea")).otherwise(pl.lit("main")).alias("region")
+
+
+REGION_LABELS = {"crimea": "Крым", "main": "Краснодарский край"}
+
+
+def _anchor_month(last_day: date, explicit: bool) -> int:
+    """Index (year*12+month-1) of the last month to count. A month with data for
+    fewer than 20 days is treated as incomplete and skipped, unless the user set the date."""
+    idx = last_day.year * 12 + last_day.month - 1
+    if not explicit and last_day.day < 20:
+        idx -= 1
+    return idx
+
+
+def _idx_to_key(idx: int) -> str:
+    return f"{idx // 12:04d}-{idx % 12 + 1:02d}"
+
+
 def sales_pace(df: pl.DataFrame, a: dict[str, Any]) -> dict:
     """
     How fast each complex sells right now: average deals per month in the last
-    N months vs the N months before, plus pace since start of sales.
-    The period filters are ignored on purpose — the window always ends at the
-    latest data (or at «По дату», when it is set).
+    N complete months vs the N months before, plus pace since start of sales.
+    Period filters are ignored on purpose — the window ends at the latest data of
+    each region (or at «По дату», when it is set).
     """
     window = max(1, min(12, int(a.get("pace_window") or 3)))
+    explicit = a.get("date_to") is not None
     base = filtered_deals(
         df,
         {**a, "year": None, "date_from": None, "months": [], "date_to": a.get("date_to")},
         use_mortgage=True,
     )
-    base = _drop_wholesale(base).filter(pl.col("object").is_not_null() & pl.col("sold_month").is_not_null())
+    base = _drop_wholesale(base).filter(
+        pl.col("object").is_not_null() & pl.col("sold_date").is_not_null()
+    )
     if base.is_empty():
         return {"rows": [], "top": [], "market": None, "message": "Нет сделок под выбранные фильтры"}
 
-    anchor_day: date = a.get("date_to") or base.select(pl.col("sold_date").max()).item()
-    anchor = _month_key(anchor_day)
-    cur_months = [_shift_months(anchor, -i) for i in range(window)]
-    prev_months = [_shift_months(anchor, -i) for i in range(window, 2 * window)]
+    base = base.with_columns(
+        region_expr(),
+        (pl.col("sold_date").dt.year() * 12 + pl.col("sold_date").dt.month() - 1).alias("midx"),
+    )
+    anchors = {
+        r["region"]: (_anchor_month(r["last"], explicit), r["last"])
+        for r in base.group_by("region").agg(pl.col("sold_date").max().alias("last")).iter_rows(named=True)
+    }
+    anchor_df = pl.DataFrame(
+        {"region": list(anchors), "aidx": [v[0] for v in anchors.values()]},
+        schema={"region": pl.Utf8, "aidx": pl.Int64},
+    )
+    base = base.join(anchor_df, on="region", how="left").with_columns(
+        (pl.col("aidx") - pl.col("midx")).alias("lag")
+    )
+    in_cur = (pl.col("lag") >= 0) & (pl.col("lag") < window)
+    in_prev = (pl.col("lag") >= window) & (pl.col("lag") < 2 * window)
+    upto_anchor = pl.col("lag") >= 0
 
     has_start = _has(base, "sales_start")
     has_exposure = _has(base, "exposure_days")
-
     aggs = [
-        pl.len().alias("deals_total"),
-        pl.col("sold_month").is_in(cur_months).sum().alias("cur"),
-        pl.col("sold_month").is_in(prev_months).sum().alias("prev"),
+        upto_anchor.sum().alias("deals_total"),
+        in_cur.sum().alias("cur"),
+        in_prev.sum().alias("prev"),
         pl.col("sold_date").min().alias("first_deal"),
-        pl.col("sold_date").max().alias("last_deal"),
-        (pl.col("is_mortgage") & pl.col("sold_month").is_in(cur_months)).sum().alias("cur_mortgage"),
-        pl.col("price_sqm").filter(pl.col("sold_month").is_in(cur_months)).median().alias("cur_sqm"),
+        (pl.col("is_mortgage") & in_cur).sum().alias("cur_mortgage"),
+        pl.col("price_sqm").filter(in_cur).median().alias("cur_sqm"),
+        pl.col("region").first().alias("region"),
+        pl.col("aidx").first().alias("aidx"),
         _first_text("city"),
         _first_text("developer"),
     ]
@@ -94,18 +132,16 @@ def sales_pace(df: pl.DataFrame, a: dict[str, Any]) -> dict:
     if has_start:
         aggs.append(pl.col("sales_start").min().alias("sales_start"))
     if has_exposure:
-        aggs.append(
-            pl.col("exposure_days").filter(pl.col("sold_month").is_in(cur_months)).median().alias("exposure")
-        )
+        aggs.append(pl.col("exposure_days").filter(in_cur).median().alias("exposure"))
 
     g = base.group_by("object").agg(aggs).filter((pl.col("cur") + pl.col("prev")) >= 3)
 
     rows = []
     for r in g.iter_rows(named=True):
+        aidx = r["aidx"]
+        end_day = date(aidx // 12, aidx % 12 + 1, 28)
         start = r.get("sales_start") or r["first_deal"]
-        months_live = max(1.0, (anchor_day - start).days / 30.44) if start else None
-        since_start = [d for d in [start] if d]
-        deals_since = r["deals_total"] if since_start else None
+        months_live = max(1.0, (end_day - start).days / 30.44) if start and start <= end_day else None
         cur_pace = r["cur"] / window
         prev_pace = r["prev"] / window
         rows.append(
@@ -114,13 +150,15 @@ def sales_pace(df: pl.DataFrame, a: dict[str, Any]) -> dict:
                 "city": r.get("city"),
                 "developer": r.get("developer"),
                 "class": r.get("class"),
+                "region": REGION_LABELS.get(r["region"], r["region"]),
+                "data_to": _idx_to_key(aidx),
                 "pace": round(cur_pace, 1),
                 "pace_prev": round(prev_pace, 1),
-                "pace_delta": round((cur_pace - prev_pace) / prev_pace * 100, 0) if prev_pace else None,
+                "pace_delta": round((cur_pace - prev_pace) / prev_pace * 100) if prev_pace else None,
                 "start": start.isoformat() if start else None,
                 "start_is_real": bool(r.get("sales_start")),
                 "months_live": round(months_live) if months_live else None,
-                "pace_since_start": round(deals_since / months_live, 1) if deals_since and months_live else None,
+                "pace_since_start": round(r["deals_total"] / months_live, 1) if months_live else None,
                 "deals_total": int(r["deals_total"]),
                 "mortgage_share": round(r["cur_mortgage"] / r["cur"] * 100) if r["cur"] else None,
                 "sqm": _r(r.get("cur_sqm")),
@@ -129,8 +167,17 @@ def sales_pace(df: pl.DataFrame, a: dict[str, Any]) -> dict:
         )
     rows.sort(key=lambda x: (x["pace"], x["pace_prev"]), reverse=True)
 
-    cur_total = base.filter(pl.col("sold_month").is_in(cur_months)).height
-    prev_total = base.filter(pl.col("sold_month").is_in(prev_months)).height
+    totals = base.select(in_cur.sum().alias("c"), in_prev.sum().alias("p")).row(0, named=True)
+    cur_total, prev_total = totals["c"], totals["p"]
+    windows = [
+        {
+            "region": REGION_LABELS.get(reg, reg),
+            "cur_months": [_idx_to_key(ai - i) for i in range(window - 1, -1, -1)],
+            "prev_months": [_idx_to_key(ai - i) for i in range(2 * window - 1, window - 1, -1)],
+            "last_day": last.isoformat(),
+        }
+        for reg, (ai, last) in sorted(anchors.items())
+    ]
     market = {
         "pace": round(cur_total / window, 1),
         "pace_prev": round(prev_total / window, 1),
@@ -141,9 +188,9 @@ def sales_pace(df: pl.DataFrame, a: dict[str, Any]) -> dict:
     }
     return {
         "window": window,
-        "cur_months": sorted(cur_months),
-        "prev_months": sorted(prev_months),
-        "anchor": anchor_day.isoformat(),
+        "windows": windows,
+        "cur_months": windows[0]["cur_months"] if len(windows) == 1 else None,
+        "prev_months": windows[0]["prev_months"] if len(windows) == 1 else None,
         "has_start": has_start,
         "has_exposure": has_exposure,
         "market": market,

@@ -61,11 +61,26 @@ def _previous_period(df: pl.DataFrame, a: dict[str, Any], current: pl.DataFrame)
     if year is None or current.is_empty():
         return None
     prev = filtered_deals(df, {**a, "year": year - 1}, use_mortgage=True)
-    # Compare like-for-like: if the current year is partial, cut last year at the same day.
-    last_day = current.select(pl.col("sold_date").max()).item()
-    if last_day is not None and not prev.is_empty():
-        prev = prev.filter(pl.col("sold_date") <= _shift_year(last_day))
-    return prev
+    if prev.is_empty():
+        return prev
+    # Compare like-for-like. Exports end on different dates (Crimea vs Kuban), so each
+    # region of last year is cut at the day its current-year data ends; regions with no
+    # data this year are left out of the comparison.
+    from services.insights import region_expr
+
+    ends = (
+        current.with_columns(region_expr())
+        .group_by("region")
+        .agg(pl.col("sold_date").max().alias("last"))
+        .iter_rows(named=True)
+    )
+    prev = prev.with_columns(region_expr())
+    parts = [
+        prev.filter((pl.col("region") == r["region"]) & (pl.col("sold_date") <= _shift_year(r["last"])))
+        for r in ends
+        if r["last"] is not None
+    ]
+    return pl.concat(parts).drop("region") if parts else prev.clear().drop("region")
 
 
 def _delta_pct(cur: float | None, prev: float | None) -> float | None:

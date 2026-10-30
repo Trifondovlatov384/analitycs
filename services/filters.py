@@ -204,7 +204,25 @@ def build_meta(df: pl.DataFrame, *, matrix: bool) -> dict:
             "max": max_d.isoformat() if max_d is not None else None,
         }
 
+    source_bounds = []
+    if not df.is_empty() and "source" in df.columns:
+        for r in (
+            df.group_by("source")
+            .agg(pl.col("sold_date").min().alias("mn"), pl.col("sold_date").max().alias("mx"))
+            .sort("mx", descending=True)
+            .iter_rows(named=True)
+        ):
+            source_bounds.append(
+                {
+                    "source": r["source"],
+                    "label": SOURCE_LABELS.get(r["source"], r["source"]),
+                    "min": r["mn"].isoformat() if r["mn"] else None,
+                    "max": r["mx"].isoformat() if r["mx"] else None,
+                }
+            )
+
     return {
+        "source_bounds": source_bounds,
         "years": years,
         "default_year": years[-1] if years else None,
         "sources": source_meta,
