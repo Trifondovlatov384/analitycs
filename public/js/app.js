@@ -1399,7 +1399,8 @@
       }
       lineChart("price", $("#chart-price"), d.labels || [], datasets, { money: true });
       const sub = $("#price-table-sub");
-      sub.textContent = "Медиана цены м² за первые 3 месяца продаж комплекса в периоде против последних 3 месяцев";
+      const k = d.window || 3;
+      sub.textContent = `Медиана цены м² за первые ${k} месяца продаж комплекса в периоде против последних ${k}. Для длинной истории выберите «Все годы»`;
       if (!(d.rows || []).length) return emptyState($("#table-price"), d.message || "Нет данных");
       renderTable(
         $("#table-price"),

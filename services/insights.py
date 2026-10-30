@@ -275,12 +275,14 @@ def price_dynamics(df: pl.DataFrame, a: dict[str, Any]) -> dict:
     if "class" in base.columns:
         meta_cols.append(_first_text("class"))
     info = {r["object"]: r for r in base.group_by("object").agg(pl.len().alias("deals"), *meta_cols).iter_rows(named=True)}
+    n_months = base.select(pl.col("sold_month").n_unique()).item()
+    k = 3 if n_months >= 6 else 2  # short periods (e.g. this year so far) use 2-month windows
     rows: list[dict] = []
     for (obj,), grp in pm.group_by(["object"], maintain_order=True):
-        if grp.height < 6:  # need two separate 3-month windows
+        if grp.height < 2 * k:  # need two separate windows
             continue
         months_list = grp["sold_month"].to_list()
-        first, last = grp.head(3), grp.tail(3)
+        first, last = grp.head(k), grp.tail(k)
         n0, n1 = int(first["n"].sum()), int(last["n"].sum())
         if n0 < 3 or n1 < 3:
             continue
@@ -341,7 +343,8 @@ def price_dynamics(df: pl.DataFrame, a: dict[str, Any]) -> dict:
         "market": [mk.get(p) for p in periods],
         "chosen": chosen,
         "rows": rows[:400],
-        "message": None if rows else "Нужно минимум 6 месяцев продаж у комплекса — выберите период подлиннее (например, «Все годы»)",
+        "window": k,
+        "message": None if rows else "Нужно минимум 4 месяца продаж у комплекса — выберите период подлиннее (например, «Все годы»)",
     }
 
 
