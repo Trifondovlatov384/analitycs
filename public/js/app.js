@@ -1345,7 +1345,7 @@
         return;
       }
       const m = d.market;
-      setKpi(P, "pace", nf1.format(m.pace), `${deltaHtml(m.pace_delta)}<span>было ${nf1.format(m.pace_prev)}</span>`);
+      setKpi(P, "pace", nf1.format(m.pace), m.pace_prev != null ? `${deltaHtml(m.pace_delta)}<span>было ${nf1.format(m.pace_prev)}</span>` : "");
       setKpi(P, "active", nf0.format(m.active), `<span>с продажами в окне</span>`);
       setKpi(P, "growing", nf0.format(m.growing), `<span>темп вырос на 20%+</span>`);
       setKpi(P, "slowing", nf0.format(m.slowing), `<span>темп упал на 20%+</span>`);
@@ -1363,7 +1363,7 @@
         ...(many ? [{ key: "region", label: "Регион" }] : []),
         { key: "class", label: "Класс" },
         { key: "pace", label: "Темп, сд/мес", num: true, render: (v) => nf1.format(v) },
-        { key: "pace_prev", label: "Было", num: true, render: (v) => nf1.format(v) },
+        { key: "pace_prev", label: "Было", num: true, render: (v) => (v == null ? "—" : nf1.format(v)) },
         { key: "pace_delta", label: "Изменение", num: true, render: pctCell },
         {
           key: "start",
