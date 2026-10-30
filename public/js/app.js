@@ -854,8 +854,9 @@
       return;
     }
     const n = activeFilterCount();
-    foot.innerHTML = `<span>${escapeHtml(periodText())}</span><span class="spacer"></span>${
-      n ? `<span>Активных фильтров: ${n}</span><button type="button" class="btn btn--link" data-reset>Сбросить</button>` : ""
+    const collapsed = $("#filters-card").classList.contains("is-collapsed");
+    foot.innerHTML = `<button type="button" class="btn btn--link filters-toggle" data-toggle-filters>${collapsed ? "Показать фильтры" : "Скрыть фильтры"}${n ? ` (${n})` : ""}</button><span>${escapeHtml(periodText())}</span><span class="spacer"></span>${
+      n ? `<span class="filters-count">Активных фильтров: ${n}</span><button type="button" class="btn btn--link" data-reset>Сбросить</button>` : ""
     }`;
   }
 
@@ -1136,7 +1137,7 @@
         [
           { key: "date", label: "Дата" },
           { key: "budget", label: "Стоимость, ₽", money: true },
-          { key: "status", label: "Статус" },
+          { key: "status", label: "Оплата", render: (v) => escapeHtml(v === "Нет" ? "Без ипотеки" : v ?? "—") },
           { key: "type_lot", label: "Тип" },
           { key: "city", label: "Город" },
           { key: "district", label: "Район" },
@@ -1321,6 +1322,10 @@
 
     const onClick = (e) => {
       if (e.target.closest("[data-reset]")) return resetFilters();
+      if (e.target.closest("[data-toggle-filters]")) {
+        $("#filters-card").classList.toggle("is-collapsed");
+        return renderFiltersFoot();
+      }
       const trigger = e.target.closest(".ms-trigger");
       if (trigger) openMultiSelect(trigger.closest("[data-ms]"));
     };
@@ -1371,6 +1376,7 @@
 
   async function boot() {
     readUrl();
+    if (window.matchMedia("(max-width: 640px)").matches) $("#filters-card").classList.add("is-collapsed");
     renderTabs();
     showPanel();
     bindEvents();
