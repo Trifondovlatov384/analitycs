@@ -263,42 +263,54 @@ def price_dynamics(df: pl.DataFrame, a: dict[str, Any]) -> dict:
     base = base.with_columns(_period_key(gran))
     periods = sorted(base.select("period").unique().drop_nulls().to_series().to_list())
 
-    # Growth table: first 3 months of the period vs last 3 months.
-    months = sorted(base.select("sold_month").unique().drop_nulls().to_series().to_list())
-    first_w, last_w = months[:3], months[-3:]
+    # Growth table, per complex: its first 3 months with sales in the period vs its
+    # last 3 months. Works for complexes that started selling mid-period, and for
+    # long periods where the earliest months are sparse.
+    pm = (
+        base.group_by(["object", "sold_month"])
+        .agg(pl.col("price_sqm").median().alias("p"), pl.len().alias("n"))
+        .sort(["object", "sold_month"])
+    )
+    meta_cols = [_first_text("city"), _first_text("developer")]
+    if "class" in base.columns:
+        meta_cols.append(_first_text("class"))
+    info = {r["object"]: r for r in base.group_by("object").agg(pl.len().alias("deals"), *meta_cols).iter_rows(named=True)}
     rows: list[dict] = []
-    if len(months) >= 4:
-        g = (
-            base.group_by("object")
-            .agg(
-                pl.len().alias("deals"),
-                pl.col("price_sqm").filter(pl.col("sold_month").is_in(first_w)).median().alias("p0"),
-                pl.col("price_sqm").filter(pl.col("sold_month").is_in(first_w)).len().alias("n0"),
-                pl.col("price_sqm").filter(pl.col("sold_month").is_in(last_w)).median().alias("p1"),
-                pl.col("price_sqm").filter(pl.col("sold_month").is_in(last_w)).len().alias("n1"),
-                pl.col("price_sqm").median().alias("median"),
-                _first_text("city"),
-                _first_text("developer"),
-                *([_first_text("class")] if "class" in base.columns else []),
-            )
-            .filter((pl.col("n0") >= 3) & (pl.col("n1") >= 3))
+    for (obj,), grp in pm.group_by(["object"], maintain_order=True):
+        if grp.height < 6:  # need two separate 3-month windows
+            continue
+        months_list = grp["sold_month"].to_list()
+        first, last = grp.head(3), grp.tail(3)
+        n0, n1 = int(first["n"].sum()), int(last["n"].sum())
+        if n0 < 3 or n1 < 3:
+            continue
+        sub = base.filter(pl.col("object") == obj)
+        p0 = sub.filter(pl.col("sold_month").is_in(first["sold_month"].to_list())).select(pl.col("price_sqm").median()).item()
+        p1 = sub.filter(pl.col("sold_month").is_in(last["sold_month"].to_list())).select(pl.col("price_sqm").median()).item()
+        if not p0:
+            continue
+        y0, m0 = int(months_list[1][:4]), int(months_list[1][5:7])
+        y1, m1 = int(months_list[-2][:4]), int(months_list[-2][5:7])
+        span = max(1, (y1 - y0) * 12 + (m1 - m0))
+        growth = (p1 - p0) / p0 * 100
+        meta = info.get(obj, {})
+        rows.append(
+            {
+                "object": obj,
+                "city": meta.get("city"),
+                "developer": meta.get("developer"),
+                "class": meta.get("class"),
+                "deals": int(meta.get("deals") or 0),
+                "from": months_list[0],
+                "to": months_list[-1],
+                "span": span,
+                "p0": _r(p0),
+                "p1": _r(p1),
+                "growth": round(growth, 1),
+                "growth_month": round(((p1 / p0) ** (1 / span) - 1) * 100, 2) if p0 > 0 and p1 > 0 else None,
+            }
         )
-        for r in g.iter_rows(named=True):
-            growth = (r["p1"] - r["p0"]) / r["p0"] * 100 if r["p0"] else None
-            rows.append(
-                {
-                    "object": r["object"],
-                    "city": r.get("city"),
-                    "developer": r.get("developer"),
-                    "class": r.get("class"),
-                    "deals": int(r["deals"]),
-                    "p0": _r(r["p0"]),
-                    "p1": _r(r["p1"]),
-                    "growth": round(growth, 1) if growth is not None else None,
-                    "median": _r(r["median"]),
-                }
-            )
-        rows.sort(key=lambda x: (x["growth"] is None, -(x["growth"] or 0)))
+    rows.sort(key=lambda x: -x["growth"])
 
     # Lines: chosen complexes (or the 5 biggest) + the whole market for reference.
     chosen = [x for x in (a.get("selected") or []) if x][:6]
@@ -328,10 +340,8 @@ def price_dynamics(df: pl.DataFrame, a: dict[str, Any]) -> dict:
         "series": series,
         "market": [mk.get(p) for p in periods],
         "chosen": chosen,
-        "first_window": first_w,
-        "last_window": last_w,
         "rows": rows[:400],
-        "message": None if len(months) >= 4 else "Для расчёта роста нужно минимум 4 месяца — выберите период подлиннее",
+        "message": None if rows else "Нужно минимум 6 месяцев продаж у комплекса — выберите период подлиннее (например, «Все годы»)",
     }
 
 

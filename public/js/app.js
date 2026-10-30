@@ -1399,11 +1399,8 @@
       }
       lineChart("price", $("#chart-price"), d.labels || [], datasets, { money: true });
       const sub = $("#price-table-sub");
-      if (d.message && !(d.rows || []).length) {
-        sub.textContent = "Первые 3 месяца периода против последних 3";
-        return emptyState($("#table-price"), d.message);
-      }
-      sub.textContent = `${monthsRange(d.first_window)} против ${monthsRange(d.last_window)} · от 3 сделок в каждом окне`;
+      sub.textContent = "Медиана цены м² за первые 3 месяца продаж комплекса в периоде против последних 3 месяцев";
+      if (!(d.rows || []).length) return emptyState($("#table-price"), d.message || "Нет данных");
       renderTable(
         $("#table-price"),
         d.rows,
@@ -1412,9 +1409,11 @@
           { key: "city", label: "Город" },
           { key: "class", label: "Класс" },
           { key: "deals", label: "Сделок", num: true },
+          { key: "from", label: "Продажи в периоде", render: (v, r) => `${escapeHtml(monthLabel(v))} — ${escapeHtml(monthLabel(r.to))}` },
           { key: "p0", label: "Цена м² в начале, ₽", money: true },
-          { key: "p1", label: "Цена м² в конце, ₽", money: true },
+          { key: "p1", label: "Цена м² сейчас, ₽", money: true },
           { key: "growth", label: "Рост", num: true, render: pctCell },
+          { key: "growth_month", label: "В среднем за месяц", num: true, render: (v) => (v == null ? "—" : `${v > 0 ? "+" : ""}${nf2.format(v)}%`) },
         ],
         { clickable: true, selected: state.filters.selected }
       );
