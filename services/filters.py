@@ -143,6 +143,8 @@ def args_from_request(req: Request) -> dict[str, Any]:
         "region": multi(g("region")),
         "work_type": multi(g("work_type")),
         "access": (g("access") or "").strip() or None,
+        "pace_window": _int(g("pace_window"), 3, lo=1, hi=12),
+        "gran": "quarter" if g("gran") == "quarter" else "month",
     }
 
 

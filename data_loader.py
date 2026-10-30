@@ -39,7 +39,14 @@ BNMAP_USE_COLS = (
     "Количество комнат",
     "Локация",
     "Участие объекта в оптовой сделке",
+    "Залогодержатель/Банк",
+    "Кол-во месяцев обременения",
+    "Старт продаж",
+    "Класс",
 )
+
+# Multi-line header in bnMAP exports — matched by prefix.
+BNMAP_EXPOSURE_PREFIX = "Срок в экспозиции до момента сделки"
 
 ANALYTIC_USE_COLS = (
     "object",
@@ -53,6 +60,9 @@ ANALYTIC_USE_COLS = (
     "price_square_r",
     "do_square",
     "deal_status",
+    "bank_name",
+    "ipoteka_month",
+    "class",
 )
 
 ANAPA_CITIES = {
@@ -234,6 +244,12 @@ def resolve_crimea_path() -> str:
     env_path = os.environ.get("CRIMEA_DEALS_PATH")
     if env_path:
         return env_path
+    if Path(CRIMEA_PATH_DEFAULT).exists():
+        return CRIMEA_PATH_DEFAULT
+    # Raw bnMAP export for Crimea dropped into the project folder as is.
+    found = sorted(Path(".").glob("bnMAP_pro_*Крым*.csv"), key=lambda x: x.stat().st_mtime, reverse=True)
+    if found:
+        return str(found[0])
     return CRIMEA_PATH_DEFAULT
 
 
@@ -305,7 +321,54 @@ def _load_combined_deals_from_csv() -> pl.DataFrame:
     if not frames:
         return pl.DataFrame()
 
-    return pl.concat(frames, how="diagonal")
+    out = pl.concat(frames, how="diagonal")
+    if "bank" in out.columns:
+        out = out.with_columns(pl.col("bank").map_elements(normalize_bank, return_dtype=pl.Utf8).alias("bank"))
+    return out
+
+
+_BANK_ALIASES = (
+    ("сбербанк", "Сбербанк"),
+    ("втб", "ВТБ"),
+    ("альфа", "Альфа-Банк"),
+    ("российский национальный", "РНКБ"),
+    ("рнкб", "РНКБ"),
+    ("совкомбанк", "Совкомбанк"),
+    ("промсвязьбанк", "ПСБ"),
+    ("газпромбанк", "Газпромбанк"),
+    ("россельхоз", "Россельхозбанк"),
+    ("дом.рф", "Банк ДОМ.РФ"),
+    ("дом рф", "Банк ДОМ.РФ"),
+    ("райффайзен", "Райффайзенбанк"),
+    ("кубань кредит", "Кубань Кредит"),
+    ("аб россия", "Банк «Россия»"),
+    ("ab россия", "Банк «Россия»"),
+    ("открытие", "Открытие"),
+    ("уралсиб", "Уралсиб"),
+    ("московский кредитный", "МКБ"),
+    ("центр-инвест", "Центр-инвест"),
+    ("генбанк", "Генбанк"),
+    ("т-банк", "Т-Банк"),
+    ("тинькофф", "Т-Банк"),
+)
+
+
+def normalize_bank(value: object) -> str | None:
+    """Collapse legal-form and spelling variants of the same bank into one name."""
+    if value is None:
+        return None
+    raw = " ".join(str(value).split())
+    if not raw or raw in {"-", "—", "0", "nan", "None"}:
+        return None
+    low = raw.lower().replace("ё", "е")
+    for needle, name in _BANK_ALIASES:
+        if needle in low:
+            return name
+    for prefix in ("пао ", "ао ", "ооо ", "оао ", "зао ", "кб ", "акб "):
+        if low.startswith(prefix):
+            raw = raw[len(prefix):]
+            low = low[len(prefix):]
+    return raw.strip(" «»\"") or None
 
 
 @lru_cache(maxsize=1)
@@ -356,6 +419,15 @@ def load_deals(cfg: Optional[DataConfig] = None) -> pl.DataFrame:
             pl.col("do_square").cast(pl.Float64, strict=False).alias("area_sqm"),
             pl.lit(None).cast(pl.Float64).alias("floor_num"),
             pl.lit(None).cast(pl.Float64).alias("rooms_count"),
+            (pl.col("bank_name").cast(pl.Utf8) if "bank_name" in df.columns else pl.lit(None).cast(pl.Utf8)).alias("bank"),
+            (
+                pl.col("ipoteka_month").cast(pl.Float64, strict=False)
+                if "ipoteka_month" in df.columns
+                else pl.lit(None).cast(pl.Float64)
+            ).alias("mortgage_months"),
+            (pl.col("class").cast(pl.Utf8) if "class" in df.columns else pl.lit(None).cast(pl.Utf8)).alias("class"),
+            pl.lit(None).cast(pl.Date).alias("sales_start"),
+            pl.lit(None).cast(pl.Float64).alias("exposure_days"),
         ]
     )
 
@@ -413,12 +485,41 @@ def load_bnmap_deals(path: str, *, force_crimea_agglomeration: bool) -> pl.DataF
     """
     header = _csv_header_columns(path)
     use_cols = [c for c in BNMAP_USE_COLS if c in header]
+    exposure_col = next((c for c in header if c.startswith(BNMAP_EXPOSURE_PREFIX)), None)
+    if exposure_col:
+        use_cols.append(exposure_col)
     df = pl.read_csv(
         path,
         columns=use_cols or None,
         try_parse_dates=False,
         ignore_errors=True,
     )
+
+    def _num(col: str | None) -> pl.Expr:
+        if not col or col not in df.columns:
+            return pl.lit(None).cast(pl.Float64)
+        return (
+            pl.col(col)
+            .cast(pl.Utf8)
+            .str.replace_all(r"[\s\u00A0]", "")
+            .str.replace_all(",", ".")
+            .cast(pl.Float64, strict=False)
+        )
+
+    def _txt(col: str) -> pl.Expr:
+        return pl.col(col).cast(pl.Utf8) if col in df.columns else pl.lit(None).cast(pl.Utf8)
+
+    extra = [
+        _txt("Залогодержатель/Банк").alias("bank"),
+        _num("Кол-во месяцев обременения").alias("mortgage_months"),
+        _txt("Класс").alias("class"),
+        _num(exposure_col).alias("exposure_days"),
+        (
+            pl.col("Старт продаж").cast(pl.Utf8).str.strptime(pl.Date, format="%d.%m.%Y", strict=False)
+            if "Старт продаж" in df.columns
+            else pl.lit(None).cast(pl.Date)
+        ).alias("sales_start"),
+    ]
 
     is_crimea_loc = (
         pl.col("Локация").cast(pl.Utf8).fill_null("").str.contains("Крым")
@@ -472,6 +573,7 @@ def load_bnmap_deals(path: str, *, force_crimea_agglomeration: bool) -> pl.DataF
             .str.replace_all(",", ".")
             .cast(pl.Float64, strict=False)
             .alias("rooms_count"),
+            *extra,
         ]
     )
 

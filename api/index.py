@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
 from auth import SESSION_FLAG, SESSION_USER, protect_flask_app  # noqa: E402
 from services.filters import args_from_request, build_meta, dimension_options  # noqa: E402
 from services.store import get_deals, matrix_available  # noqa: E402
-from services import widgets  # noqa: E402
+from services import insights, widgets  # noqa: E402
 
 PUBLIC_DIR = ROOT / "public"
 # Hidden admin tabs. On Vercel they stay closed until ADMIN_ACCESS_KEY is set;
@@ -90,6 +90,21 @@ def api_error(err):  # pragma: no cover - safety net
     if request.path.startswith("/api/"):
         return _json({"error": "Ошибка на сервере, попробуйте изменить фильтры"}, 500)
     return ("Internal Server Error", 500)
+
+
+@app.get("/api/pace")
+def api_pace():
+    return _json(insights.sales_pace(get_deals(), args_from_request(request)))
+
+
+@app.get("/api/price-dynamics")
+def api_price_dynamics():
+    return _json(insights.price_dynamics(get_deals(), args_from_request(request)))
+
+
+@app.get("/api/mortgage")
+def api_mortgage():
+    return _json(insights.mortgage_breakdown(get_deals(), args_from_request(request)))
 
 
 @app.get("/api/deals/top-complexes")

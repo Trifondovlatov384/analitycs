@@ -1,6 +1,9 @@
 (() => {
   const PUBLIC_TABS = [
     ["tab_deals", "Дашборд"],
+    ["tab_pace", "Темп продаж"],
+    ["tab_price", "Цена м²"],
+    ["tab_mortgage", "Ипотека"],
     ["tab_complexes", "Комплексы"],
     ["tab_compare", "Сравнение"],
     ["tab_euler", "Пересечение аудиторий"],
@@ -43,6 +46,8 @@
     region: [],
     work_type: [],
     access: "",
+    pace_window: 3,
+    gran: "month",
   };
 
   const state = {
@@ -87,7 +92,9 @@
   };
 
   function monthLabel(key) {
-    // "2026-03" → "мар 26"
+    // "2026-03" → "мар 26", "2026-Q1" → "1 кв 26"
+    const q = /^(\d{4})-Q(\d)$/.exec(String(key || ""));
+    if (q) return `${q[2]} кв ${q[1].slice(2)}`;
     const m = /^(\d{4})-(\d{2})/.exec(String(key || ""));
     if (!m) return String(key ?? "");
     return `${MONTHS_RU[Number(m[2]) - 1]} ${m[1].slice(2)}`;
@@ -131,6 +138,7 @@
   const SCALAR_KEYS = [
     "source", "agglomeration", "year", "date_from", "date_to", "mortgage_mode", "budget_min", "budget_max",
     "object", "line_shape", "search", "type_lot_single", "top_n", "target_budget", "delta_budget",
+    "pace_window", "gran",
   ];
   const LIST_KEYS = ["months", "city", "developer", "project", "type_lot", "district", "selected", "projects", "region", "work_type", "data_quality"];
 
@@ -140,7 +148,7 @@
     state.filters.access = p.get("access") || "";
     for (const k of SCALAR_KEYS) if (p.has(k)) state.filters[k] = p.get(k);
     for (const k of LIST_KEYS) if (p.has(k)) state.filters[k] = p.get(k).split(",").filter(Boolean);
-    for (const k of ["year", "top_n", "target_budget", "delta_budget"]) {
+    for (const k of ["year", "top_n", "target_budget", "delta_budget", "pace_window"]) {
       if (state.filters[k] !== null && state.filters[k] !== "") {
         const n = Number(state.filters[k]);
         state.filters[k] = Number.isFinite(n) ? n : DEFAULT_FILTERS[k];
@@ -175,6 +183,8 @@
       putScalar("delta_budget", [3000000]);
     }
     if (state.tab === "tab_heatmap") putScalar("top_n", [40]);
+    if (state.tab === "tab_pace") putScalar("pace_window", [3]);
+    if (state.tab === "tab_price") putScalar("gran", ["month"]);
     for (const k of ["months", "city", "developer", "project", "type_lot", "district", "selected", "projects", "region", "work_type"]) {
       if (f[k] && f[k].length) p.set(k, f[k].join(","));
     }
@@ -193,6 +203,7 @@
       "source", "agglomeration", "year", "date_from", "date_to", "months", "city", "developer", "project", "type_lot",
       "mortgage_mode", "budget_min", "budget_max", "object", "month", "district", "selected", "top_n", "line_shape",
       "data_quality", "target_budget", "delta_budget", "type_lot_single", "projects", "search", "region", "work_type", "access",
+      "pace_window", "gran",
     ];
     for (const k of keys) {
       const v = f[k];
@@ -533,14 +544,48 @@
 
   /* ───────────────────────── Heatmap ───────────────────────── */
 
-  function heatColor(t) {
-    // Sequential "sea" ramp: light → deep. Reads well and works for colour-blind users.
-    const stops = [
+  const HEAT_PALETTES = {
+    // Classic: red (few deals) → yellow → green (many deals)
+    rg: [
+      [0, [215, 48, 39]],
+      [0.5, [254, 224, 139]],
+      [1, [26, 152, 80]],
+    ],
+    // Sequential blue: light → deep, friendlier for colour-blind viewers
+    sea: [
       [0, [230, 243, 246]],
       [0.35, [124, 196, 214]],
       [0.7, [14, 116, 144]],
       [1, [8, 61, 77]],
-    ];
+    ],
+  };
+
+  function getHeatPalette() {
+    try {
+      const v = localStorage.getItem("hmPalette");
+      if (v && HEAT_PALETTES[v]) return v;
+    } catch (_) {
+      /* storage unavailable */
+    }
+    return "rg";
+  }
+
+  function setHeatPalette(name) {
+    try {
+      localStorage.setItem("hmPalette", name);
+    } catch (_) {
+      /* storage unavailable */
+    }
+  }
+
+  function syncPaletteUi() {
+    const cur = getHeatPalette();
+    $$("#hm-palette .seg").forEach((b) => b.classList.toggle("is-active", b.dataset.palette === cur));
+    $(".hm-legend")?.classList.toggle("is-rg", cur === "rg");
+  }
+
+  function heatColor(t) {
+    const stops = HEAT_PALETTES[getHeatPalette()];
     const x = Math.max(0, Math.min(1, t));
     let i = 0;
     while (i < stops.length - 2 && x > stops[i + 1][0]) i += 1;
@@ -548,10 +593,13 @@
     const [bT, bC] = stops[i + 1];
     const u = (x - aT) / (bT - aT || 1);
     const rgb = aC.map((v, k) => Math.round(v + (bC[k] - v) * u));
-    return { bg: `rgb(${rgb.join(",")})`, fg: x > 0.55 ? "#fff" : "#16181d" };
+    const lum = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255;
+    return { bg: `rgb(${rgb.join(",")})`, fg: lum < 0.5 ? "#fff" : "#16181d" };
   }
 
   function renderHeatmap(container, data) {
+    state.lastHeatmap = data;
+    syncPaletteUi();
     clearSkeleton(container);
     const { objects = [], display = [], months = [], month_keys = [], z = [] } = data;
     if (!months.length || !display.length) return emptyState(container, "Нет данных", "Попробуйте ослабить фильтры");
@@ -765,6 +813,8 @@
   }
 
   function monthLabelFull(key) {
+    const q = /^(\d{4})-Q(\d)$/.exec(String(key || ""));
+    if (q) return `${q[2]} квартал ${q[1]}`;
     const m = /^(\d{4})-(\d{2})/.exec(String(key || ""));
     return m ? `${MONTHS_RU_FULL[Number(m[2]) - 1]} ${m[1]}` : String(key);
   }
@@ -804,6 +854,13 @@
       blocks.push(filterMulti("developer", "Застройщик", dims.developer || [], f.developer));
       blocks.push(filterMulti("project", "Проект", dims.project || [], f.project));
       blocks.push(filterMulti("type_lot", "Тип", dims.type_lot || [], f.type_lot));
+    } else if (state.tab === "tab_pace" || state.tab === "tab_mortgage") {
+      blocks.push(filterMulti("developer", "Застройщик", dims.developer || [], f.developer));
+      blocks.push(filterMulti("type_lot", "Тип", dims.type_lot || [], f.type_lot));
+    } else if (state.tab === "tab_price") {
+      blocks.push(filterMulti("developer", "Застройщик", dims.developer || [], f.developer));
+      blocks.push(filterMulti("type_lot", "Тип", dims.type_lot || [], f.type_lot));
+      blocks.push(filterMulti("selected", "Комплексы на графике (до 6)", dims.project || [], f.selected, { max: 6, wide: true }));
     } else if (state.tab === "tab_complexes") {
       blocks.push(filterMulti("type_lot", "Тип", dims.type_lot || [], f.type_lot));
       blocks.push(filterSelect("object", "Комплекс", dims.object || [], f.object, { emptyLabel: "Выберите комплекс" }));
@@ -841,6 +898,9 @@
 
   function periodText() {
     const f = state.filters;
+    if (state.tab === "tab_pace") {
+      return `Окно: последние ${f.pace_window} мес.${f.date_to ? ` до ${f.date_to}` : " данных"} — год и «С даты» здесь не используются`;
+    }
     if (f.date_from || f.date_to) return `Период: ${f.date_from || "…"} — ${f.date_to || "…"}`;
     if (f.year) return `Период: ${f.year} год${f.months?.length ? `, месяцев: ${f.months.length}` : ""}`;
     return "Период: все годы";
@@ -1242,6 +1302,165 @@
     }, [$("#chart-pg-budget"), $("#chart-pg-sqm"), $("#table-pg")]);
   }
 
+  /* ───────────────────────── Insight tabs ───────────────────────── */
+
+  function setKpi(panel, key, valueHtml, footHtml = "") {
+    const card = $(`#${panel} .kpi[data-kpi="${key}"]`);
+    if (!card) return;
+    const v = $(".kpi-value", card);
+    v.classList.remove("skeleton");
+    v.innerHTML = valueHtml;
+    $(".kpi-foot", card).innerHTML = footHtml;
+  }
+
+  function monthsRange(list) {
+    if (!list?.length) return "";
+    const a = monthLabelFull(list[0]);
+    const b = monthLabelFull(list[list.length - 1]);
+    return a === b ? a : `${a} — ${b}`;
+  }
+
+  const pctCell = (v) => {
+    if (v === null || v === undefined) return '<span class="muted">—</span>';
+    const cls = Math.abs(v) < 0.5 ? "delta--flat" : v > 0 ? "delta--up" : "delta--down";
+    const sign = v > 0 ? "+" : v < 0 ? "−" : "";
+    return `<span class="delta ${cls}">${sign}${nf1.format(Math.abs(v))}%</span>`;
+  };
+
+  async function loadPaceTab() {
+    const P = "panel-tab_pace";
+    $$("#pace-window .seg").forEach((b) => b.classList.toggle("is-active", Number(b.dataset.window) === Number(state.filters.pace_window)));
+    $$(`#${P} .kpi-value`).forEach((el) => el.classList.add("skeleton"));
+    await track(async (signal) => {
+      const d = await api("/api/pace", { signal });
+      if (d.message) {
+        ["chart-pace", "table-pace"].forEach((id) => emptyState($("#" + id), d.message));
+        return;
+      }
+      const m = d.market;
+      setKpi(P, "pace", nf1.format(m.pace), `${deltaHtml(m.pace_delta)}<span>было ${nf1.format(m.pace_prev)}</span>`);
+      setKpi(P, "active", nf0.format(m.active), `<span>с продажами в окне</span>`);
+      setKpi(P, "growing", nf0.format(m.growing), `<span>темп вырос на 20%+</span>`);
+      setKpi(P, "slowing", nf0.format(m.slowing), `<span>темп упал на 20%+</span>`);
+      const win = monthsRange(d.cur_months);
+      $("#pace-sub").textContent = `Сделок в месяц, ${win}`;
+      $("#pace-table-sub").textContent = `${win} против ${monthsRange(d.prev_months)}`;
+      const c = palette();
+      barChart("pace", $("#chart-pace"), d.top.map((x) => x.name), d.top.map((x) => x.value), { color: c.sea, tooltipSuffix: " сделок/мес" });
+      const cols = [
+        { key: "object", label: "Комплекс" },
+        { key: "city", label: "Город" },
+        { key: "class", label: "Класс" },
+        { key: "pace", label: "Темп, сд/мес", num: true, render: (v) => nf1.format(v) },
+        { key: "pace_prev", label: "Было", num: true, render: (v) => nf1.format(v) },
+        { key: "pace_delta", label: "Изменение", num: true, render: pctCell },
+        {
+          key: "start",
+          label: "Старт продаж",
+          render: (v, r) => (v ? `${escapeHtml(v.slice(0, 7).split("-").reverse().join("."))}${r.start_is_real ? "" : ' <span class="pill" title="Старт неизвестен — взята дата первой сделки">≈</span>'}` : "—"),
+        },
+        { key: "pace_since_start", label: "Темп со старта", num: true, render: (v) => (v == null ? "—" : nf1.format(v)) },
+        { key: "mortgage_share", label: "Ипотека, %", num: true },
+        { key: "sqm", label: "Медиана м², ₽", money: true },
+      ];
+      if (d.has_exposure) cols.push({ key: "exposure", label: "Дней в экспозиции", num: true });
+      renderTable($("#table-pace"), d.rows, cols);
+    }, [$("#chart-pace"), $("#table-pace")]);
+  }
+
+  const SERIES_COLORS = ["#0e7490", "#c98a2b", "#7c3aed", "#15803d", "#db2777", "#2563eb"];
+
+  async function loadPriceTab() {
+    $$("#price-gran .seg").forEach((b) => b.classList.toggle("is-active", b.dataset.gran === state.filters.gran));
+    await track(async (signal) => {
+      const d = await api("/api/price-dynamics", { signal });
+      const c = palette();
+      const datasets = (d.series || []).map((s, i) => ({
+        label: s.name,
+        data: s.values,
+        borderColor: SERIES_COLORS[i % SERIES_COLORS.length],
+        backgroundColor: "transparent",
+        spanGaps: true,
+        pointRadius: 2,
+      }));
+      if ((d.labels || []).length) {
+        datasets.push({ label: "Весь рынок", data: d.market, borderColor: c.faint, borderDash: [5, 4], backgroundColor: "transparent", borderWidth: 1.5 });
+      }
+      lineChart("price", $("#chart-price"), d.labels || [], datasets, { money: true });
+      const sub = $("#price-table-sub");
+      if (d.message && !(d.rows || []).length) {
+        sub.textContent = "Первые 3 месяца периода против последних 3";
+        return emptyState($("#table-price"), d.message);
+      }
+      sub.textContent = `${monthsRange(d.first_window)} против ${monthsRange(d.last_window)} · от 3 сделок в каждом окне`;
+      renderTable(
+        $("#table-price"),
+        d.rows,
+        [
+          { key: "object", label: "Комплекс" },
+          { key: "city", label: "Город" },
+          { key: "class", label: "Класс" },
+          { key: "deals", label: "Сделок", num: true },
+          { key: "p0", label: "Цена м² в начале, ₽", money: true },
+          { key: "p1", label: "Цена м² в конце, ₽", money: true },
+          { key: "growth", label: "Рост", num: true, render: pctCell },
+        ],
+        { clickable: true, selected: state.filters.selected }
+      );
+      $("#table-price").onclick = (e) => {
+        const tr = e.target.closest("tbody tr[data-key]");
+        if (!tr) return;
+        const set = new Set(state.filters.selected);
+        if (set.has(tr.dataset.key)) set.delete(tr.dataset.key);
+        else if (set.size >= 6) return toast("На графике можно показать до 6 комплексов");
+        else set.add(tr.dataset.key);
+        state.filters.selected = [...set];
+        renderFilters();
+        writeUrl();
+        loadPriceTab();
+      };
+    }, [$("#chart-price"), $("#table-price")]);
+  }
+
+  async function loadMortgageTab() {
+    const P = "panel-tab_mortgage";
+    $$(`#${P} .kpi-value`).forEach((el) => el.classList.add("skeleton"));
+    await track(async (signal) => {
+      const d = await api("/api/mortgage", { signal });
+      if (d.message) {
+        ["chart-banks", "chart-terms", "chart-mortgage-monthly", "table-mortgage"].forEach((id) => emptyState($("#" + id), d.message));
+        return;
+      }
+      const c = palette();
+      setKpi(P, "m_share", d.mortgage_share != null ? `${nf1.format(d.mortgage_share)}<small>%</small>` : "—", `<span>${nf0.format(d.mortgage)} из ${nf0.format(d.total)} сделок</span>`);
+      setKpi(P, "m_term", d.median_term != null ? `${nf1.format(d.median_term)}<small>лет</small>` : "—", d.term_coverage != null ? `<span>срок известен у ${d.term_coverage}% ипотек</span>` : "");
+      setKpi(P, "m_bank", d.top_bank ? `<span class="kpi-value--text">${escapeHtml(d.top_bank.name)}</span>` : "—", d.top_bank ? `<span>${nf1.format(d.top_bank.share)}% ипотечных сделок</span>` : "");
+      setKpi(P, "m_cover", d.bank_coverage != null ? `${d.bank_coverage}<small>%</small>` : "—", `<span>ипотек с указанным банком</span>`);
+
+      if ((d.banks || []).length) {
+        barChart("banks", $("#chart-banks"), d.banks.map((b) => b.name), d.banks.map((b) => b.share), { color: c.sea, tooltipSuffix: "%" });
+      } else emptyState($("#chart-banks"), "Банк в данных не указан");
+      if ((d.terms || []).length) {
+        barChart("terms", $("#chart-terms"), d.terms.map((t) => t.label), d.terms.map((t) => t.share), { horizontal: false, color: c.sand, tooltipSuffix: "%" });
+      } else emptyState($("#chart-terms"), "Срок ипотеки в данных не указан");
+
+      const s = d.series || {};
+      const ds = [{ label: "Доля ипотеки, %", data: s.share || [], borderColor: c.sea, backgroundColor: (ctx) => gradient(ctx, toHex(c.sea)), fill: true, yAxisID: "y" }];
+      if ((s.term || []).some((x) => x != null)) ds.push({ label: "Срок, лет", data: s.term, borderColor: c.sand, backgroundColor: "transparent", borderDash: [5, 4], yAxisID: "y1", spanGaps: true });
+      lineChart("mortgage-monthly", $("#chart-mortgage-monthly"), s.labels || [], ds, { y1: ds.length > 1 });
+
+      renderTable($("#table-mortgage"), d.rows || [], [
+        { key: "object", label: "Комплекс" },
+        { key: "city", label: "Город" },
+        { key: "deals", label: "Сделок", num: true },
+        { key: "mortgage_share", label: "Ипотека, %", num: true },
+        { key: "top_bank", label: "Главный банк" },
+        { key: "top_bank_share", label: "Его доля, %", num: true },
+        { key: "term", label: "Срок, лет", num: true, render: (v) => (v == null ? "—" : nf1.format(v)) },
+      ]);
+    }, [$("#chart-banks"), $("#chart-terms"), $("#chart-mortgage-monthly"), $("#table-mortgage")]);
+  }
+
   async function loadActiveTab({ refreshDims = true } = {}) {
     abortAll();
     closeMs({ apply: false });
@@ -1265,6 +1484,9 @@
 
     const loaders = {
       tab_deals: loadDealsTab,
+      tab_pace: loadPaceTab,
+      tab_price: loadPriceTab,
+      tab_mortgage: loadMortgageTab,
       tab_complexes: loadComplexesTab,
       tab_compare: loadCompareTab,
       tab_euler: loadEulerTab,
@@ -1365,6 +1587,31 @@
         }
       }
       writeUrl();
+    });
+
+    $("#pace-window")?.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-window]");
+      if (!btn) return;
+      state.filters.pace_window = Number(btn.dataset.window);
+      writeUrl();
+      renderFiltersFoot();
+      loadPaceTab();
+    });
+
+    $("#price-gran")?.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-gran]");
+      if (!btn) return;
+      state.filters.gran = btn.dataset.gran;
+      writeUrl();
+      loadPriceTab();
+    });
+
+    $("#hm-palette")?.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-palette]");
+      if (!btn) return;
+      setHeatPalette(btn.dataset.palette);
+      syncPaletteUi();
+      if (state.lastHeatmap) renderHeatmap($("#heatmap"), state.lastHeatmap);
     });
 
     $("#cmp-clear")?.addEventListener("click", () => {

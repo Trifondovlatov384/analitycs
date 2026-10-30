@@ -1,0 +1,42 @@
+name: Rebuild deals cache
+
+# Rebuilds data/cache/combined_deals.parquet whenever source CSVs or the loader
+# change, so Vercel always serves fresh data. Can also be started by hand.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "*.csv"
+      - "data_loader.py"
+      - "scripts/build_deals_cache.py"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-cache
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Build parquet cache
+        run: python scripts/build_deals_cache.py
+      - name: Commit cache if it changed
+        run: |
+          git config user.name "cache-bot"
+          git config user.email "cache-bot@users.noreply.github.com"
+          git add data/cache/combined_deals.parquet data/cache/combined_deals.meta
+          if git diff --cached --quiet; then
+            echo "Cache unchanged"
+          else
+            git commit -m "Rebuild deals cache"
+            git push
+          fi

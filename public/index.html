@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="/css/app.css?v=6">
+  <link rel="stylesheet" href="/css/app.css?v=7">
 </head>
 <body>
   <div class="app" id="app">
@@ -87,6 +87,81 @@
         </div>
       </section>
 
+      <section class="panel" data-panel="tab_pace" id="panel-tab_pace">
+        <div class="kpi-grid kpi-grid--4" id="pace-kpis">
+          <article class="kpi" data-kpi="pace"><div class="kpi-label">Темп рынка, сделок/мес</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+          <article class="kpi" data-kpi="active"><div class="kpi-label">Комплексов с продажами</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+          <article class="kpi" data-kpi="growing"><div class="kpi-label">Ускорились (+20% и больше)</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+          <article class="kpi" data-kpi="slowing"><div class="kpi-label">Замедлились (−20% и больше)</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+        </div>
+        <div class="widgets">
+          <article class="widget widget--chart">
+            <header class="widget-head">
+              <div><h2 class="widget-title">Самые быстрые комплексы</h2><p class="widget-sub" id="pace-sub">Сделок в месяц</p></div>
+              <div class="segmented" id="pace-window" role="group" aria-label="Окно расчёта">
+                <button type="button" class="seg" data-window="1">1 мес</button>
+                <button type="button" class="seg is-active" data-window="3">3 мес</button>
+                <button type="button" class="seg" data-window="6">6 мес</button>
+              </div>
+            </header>
+            <div class="chart-wrap chart-wrap--xl skeleton" id="chart-pace"></div>
+          </article>
+          <article class="widget widget--table">
+            <header class="widget-head"><div><h2 class="widget-title">Темп по комплексам</h2><p class="widget-sub" id="pace-table-sub">Сравнение с предыдущим окном такой же длины</p></div></header>
+            <div id="table-pace" class="table-wrap skeleton"></div>
+            <p class="note">Остатка в продаже в выгрузке нет, поэтому срок распродажи пока не считаем. Если появятся шахматки или остатки из bnMAP, добавим колонку «месяцев до распродажи».</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="tab_price" id="panel-tab_price">
+        <div class="widgets">
+          <article class="widget widget--chart">
+            <header class="widget-head">
+              <div><h2 class="widget-title">Цена за м² по комплексам</h2><p class="widget-sub">Медиана, ₽/м². Пунктир — весь рынок под фильтрами. Комплексы выбираются в фильтре выше (до 6)</p></div>
+              <div class="segmented" id="price-gran" role="group" aria-label="Шаг">
+                <button type="button" class="seg is-active" data-gran="month">Месяцы</button>
+                <button type="button" class="seg" data-gran="quarter">Кварталы</button>
+              </div>
+            </header>
+            <div class="chart-wrap chart-wrap--xl skeleton" id="chart-price"></div>
+          </article>
+          <article class="widget widget--table">
+            <header class="widget-head"><div><h2 class="widget-title">Рост цены за м²</h2><p class="widget-sub" id="price-table-sub">Первые 3 месяца периода против последних 3</p></div></header>
+            <div id="table-price" class="table-wrap skeleton"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="tab_mortgage" id="panel-tab_mortgage">
+        <div class="kpi-grid kpi-grid--4">
+          <article class="kpi" data-kpi="m_share"><div class="kpi-label">Доля ипотеки</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+          <article class="kpi" data-kpi="m_term"><div class="kpi-label">Медианный срок ипотеки</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+          <article class="kpi" data-kpi="m_bank"><div class="kpi-label">Главный банк</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+          <article class="kpi" data-kpi="m_cover"><div class="kpi-label">Банк известен</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+        </div>
+        <div class="widgets">
+          <div class="widgets-2">
+            <article class="widget widget--chart">
+              <header class="widget-head"><div><h2 class="widget-title">Банки</h2><p class="widget-sub">Доля в ипотечных сделках</p></div></header>
+              <div class="chart-wrap chart-wrap--tall skeleton" id="chart-banks"></div>
+            </article>
+            <article class="widget widget--chart">
+              <header class="widget-head"><div><h2 class="widget-title">Сроки ипотеки</h2><p class="widget-sub">Распределение ипотечных сделок по сроку</p></div></header>
+              <div class="chart-wrap chart-wrap--tall skeleton" id="chart-terms"></div>
+            </article>
+          </div>
+          <article class="widget widget--chart">
+            <header class="widget-head"><div><h2 class="widget-title">Ипотека по месяцам</h2><p class="widget-sub">Доля ипотечных сделок, % (левая ось) и медианный срок, лет (правая)</p></div></header>
+            <div class="chart-wrap chart-wrap--tall skeleton" id="chart-mortgage-monthly"></div>
+          </article>
+          <article class="widget widget--table">
+            <header class="widget-head"><div><h2 class="widget-title">Ипотека по комплексам</h2><p class="widget-sub">Комплексы от 5 сделок</p></div></header>
+            <div id="table-mortgage" class="table-wrap skeleton"></div>
+          </article>
+        </div>
+      </section>
+
       <section class="panel" data-panel="tab_complexes" id="panel-tab_complexes">
         <div class="widgets">
           <div class="widgets-2">
@@ -134,7 +209,13 @@
             <article class="widget widget--table">
               <header class="widget-head">
                 <div><h2 class="widget-title">Теплокарта продаж по месяцам</h2><p class="widget-sub">Клик по ячейке — список сделок ниже</p></div>
-                <div class="hm-legend" aria-hidden="true"><span>меньше</span><i></i><span>больше</span></div>
+                <div class="hm-tools">
+                  <div class="hm-legend" aria-hidden="true"><span>меньше</span><i></i><span>больше</span></div>
+                  <div class="segmented" id="hm-palette" role="group" aria-label="Цвета теплокарты">
+                    <button type="button" class="seg" data-palette="rg">Красный → зелёный</button>
+                    <button type="button" class="seg" data-palette="sea">Синяя</button>
+                  </div>
+                </div>
               </header>
               <div id="heatmap" class="heatmap skeleton"></div>
             </article>
@@ -192,6 +273,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" defer></script>
-  <script src="/js/app.js?v=6" defer></script>
+  <script src="/js/app.js?v=7" defer></script>
 </body>
 </html>
