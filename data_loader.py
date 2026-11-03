@@ -445,6 +445,24 @@ def normalize_places(df: pl.DataFrame) -> pl.DataFrame:
         pl.col("city").map_elements(normalize_city, return_dtype=pl.Utf8).alias("city"),
         pl.col("loc_district").map_elements(normalize_district, return_dtype=pl.Utf8).alias("loc_district"),
     )
+    # Same place spelled with different case («Горячий ключ» / «Горячий Ключ»): keep the most common spelling.
+    for col in ("city", "loc_district"):
+        counts = (
+            df.filter(pl.col(col).is_not_null())
+            .group_by(col)
+            .len()
+            .with_columns(pl.col(col).str.to_lowercase().alias("_k"))
+            .sort("len", descending=True)
+        )
+        canon = counts.group_by("_k", maintain_order=True).first()
+        mapping = {
+            r[col]: canon_name
+            for r in counts.iter_rows(named=True)
+            for canon_name in [canon.filter(pl.col("_k") == r["_k"])[col][0]]
+            if r[col] != canon_name
+        }
+        if mapping:
+            df = df.with_columns(pl.col(col).replace(mapping).alias(col))
     by_district = pl.col("loc_district").replace_strict(KUBAN_AGGLOMERATIONS, default=None, return_dtype=pl.Utf8)
     by_city = (
         pl.when(pl.col("city").is_in([normalize_city(c) for c in ANAPA_CITIES]))
