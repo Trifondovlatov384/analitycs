@@ -667,7 +667,9 @@
       ? selected.length === 1
         ? labelOf(selected[0])
         : `${labelOf(selected[0])} и ещё ${selected.length - 1}`
-      : "Все";
+      : name === "type_lot"
+        ? "Без машино-мест и кладовок"
+        : "Все";
     return `<div class="filter ms ${wide ? "filter--wide" : ""} ${selected.length ? "is-set" : ""}" data-ms="${name}">
       <span class="filter-label">${escapeHtml(label)}</span>
       <button type="button" class="ms-trigger" aria-haspopup="listbox" aria-expanded="false">
@@ -776,20 +778,8 @@
     const sources = meta.sources?.options || [];
     const blocks = [];
     if (meta.sources?.show !== false && sources.length > 1) blocks.push(filterSelect("source", "Источник", sources, f.source));
-    blocks.push(
-      filterSelect(
-        "agglomeration",
-        "Агломерация",
-        [
-          { label: "Все", value: "all" },
-          { label: "Анапа", value: "Анапа" },
-          { label: "Сочи", value: "Сочи" },
-          { label: "Крым", value: "Крым" },
-          { label: "Без групп", value: "без групп" },
-        ],
-        f.agglomeration
-      )
-    );
+    const aggs = (meta.agglomerations || []).map((x) => ({ label: x.label, value: x.value }));
+    blocks.push(filterSelect("agglomeration", "Агломерация", [{ label: "Все", value: "all" }, ...aggs], f.agglomeration));
     blocks.push(filterSelect("year", "Год", years, f.year, { emptyLabel: "Все годы" }));
     blocks.push(filterMulti("months", "Месяцы", (dims.months || []).map((o) => ({ ...o, label: monthLabelFull(o.value) })), f.months));
     blocks.push(filterInput("date_from", "С даты", "date", f.date_from, minMaxAttrs()));

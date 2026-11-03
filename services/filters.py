@@ -10,6 +10,8 @@ from aggregations import apply_filters
 from data_loader import list_sorted
 
 SOURCE_LABELS = {
+    "kuban": "Краснодарский край",
+    "adygea": "Адыгея",
     "analitic": "Analitic",
     "crimea": "Крым",
     "kk2026": "Краснодарский край",
@@ -221,7 +223,21 @@ def build_meta(df: pl.DataFrame, *, matrix: bool) -> dict:
                 }
             )
 
+    agglomerations = []
+    if not df.is_empty() and "agglomeration" in df.columns:
+        from aggregations import SECONDARY_LOTS
+
+        counted = df.filter(~pl.col("type_lot").is_in(list(SECONDARY_LOTS)) | pl.col("type_lot").is_null())
+        agglomerations = [
+            {"label": r["agglomeration"], "value": r["agglomeration"], "deals": int(r["len"])}
+            for r in counted.group_by("agglomeration").len().sort("len", descending=True).iter_rows(named=True)
+            if r["agglomeration"]
+        ]
+        # Resort hubs first, the catch-all group last.
+        agglomerations.sort(key=lambda x: (x["value"].startswith("Кубань:") or x["value"] == "без групп", -x["deals"]))
+
     return {
+        "agglomerations": agglomerations,
         "source_bounds": source_bounds,
         "years": years,
         "default_year": years[-1] if years else None,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import os
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -23,6 +24,7 @@ COMBINED_CACHE_PATH = CACHE_DIR / "combined_deals.parquet"
 COMBINED_CACHE_META_PATH = CACHE_DIR / "combined_deals.meta"
 
 BNMAP_USE_COLS = (
+    "ID лота",
     "Проект",
     "Город",
     "Район",
@@ -151,18 +153,51 @@ def _fingerprint_paths(paths: list[str]) -> str:
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 
+# Regional bnMAP exports dropped into the project folder as downloaded, e.g.
+# «bnMAP_pro_Сделки_Краснодарский_край_19-10-2026_16-14_part1.csv».
+REGIONAL_EXPORT_GLOB = "bnMAP_pro_Сделки_*.csv"
+_REGION_RE = re.compile(r"bnMAP_pro_Сделки_(.+?)_(\d{2})-(\d{2})-(\d{4})")
+REGION_KEYS = {
+    "республика_крым": "crimea",
+    "крым": "crimea",
+    "краснодарский_край": "kuban",
+    "республика_адыгея": "adygea",
+    "адыгея": "adygea",
+}
+
+
+def find_regional_exports() -> dict[str, list[str]]:
+    """{region_key: [paths, newest export first]} for every bnMAP regional export found."""
+    found: dict[str, list[tuple[tuple[int, int, int], str]]] = {}
+    for path in Path(".").glob(REGIONAL_EXPORT_GLOB):
+        m = _REGION_RE.match(path.name)
+        if not m:
+            continue
+        region_raw = m.group(1).strip("_").lower()
+        key = REGION_KEYS.get(region_raw, re.sub(r"[^a-zа-я0-9]+", "_", region_raw))
+        stamp = (int(m.group(4)), int(m.group(3)), int(m.group(2)))
+        found.setdefault(key, []).append((stamp, str(path)))
+    return {k: [p for _, p in sorted(v, reverse=True)] for k, v in found.items()}
+
+
 def _collect_source_paths() -> list[str]:
     paths: list[str] = []
     paths.extend(resolve_bnmap_export_paths())
-    analitic_path = resolve_analitic_path()
-    if Path(analitic_path).exists():
-        paths.append(analitic_path)
-    kk2026_path = resolve_kk2026_path()
-    if kk2026_path:
-        paths.append(kk2026_path)
-    crimea_path = resolve_crimea_path()
-    if Path(crimea_path).exists():
-        paths.append(crimea_path)
+    regional = find_regional_exports()
+    for region_paths in regional.values():
+        paths.extend(region_paths)
+    # Older Kuban sources are superseded by a bnMAP Krasnodar export (same deals, shorter history).
+    if "kuban" not in regional:
+        analitic_path = resolve_analitic_path()
+        if Path(analitic_path).exists():
+            paths.append(analitic_path)
+        kk2026_path = resolve_kk2026_path()
+        if kk2026_path:
+            paths.append(kk2026_path)
+    if "crimea" not in regional:
+        crimea_path = resolve_crimea_path()
+        if Path(crimea_path).exists():
+            paths.append(crimea_path)
 
     out: list[str] = []
     for path in paths:
@@ -244,12 +279,6 @@ def resolve_crimea_path() -> str:
     env_path = os.environ.get("CRIMEA_DEALS_PATH")
     if env_path:
         return env_path
-    if Path(CRIMEA_PATH_DEFAULT).exists():
-        return CRIMEA_PATH_DEFAULT
-    # Raw bnMAP export for Crimea dropped into the project folder as is.
-    found = sorted(Path(".").glob("bnMAP_pro_*Крым*.csv"), key=lambda x: x.stat().st_mtime, reverse=True)
-    if found:
-        return str(found[0])
     return CRIMEA_PATH_DEFAULT
 
 
@@ -275,12 +304,23 @@ def resolve_kk2026_path() -> str | None:
     return None
 
 
+def _load_regional(key: str, paths: list[str]) -> pl.DataFrame:
+    """Load every export of one region; the same lot sold on the same day counts once."""
+    parts = [load_bnmap_deals(p, force_crimea_agglomeration=(key == "crimea")) for p in paths]
+    df = pl.concat(parts, how="diagonal") if len(parts) > 1 else parts[0]
+    if len(parts) > 1 and "lot_id" in df.columns:
+        with_id = df.filter(pl.col("lot_id").is_not_null())
+        no_id = df.filter(pl.col("lot_id").is_null())
+        with_id = with_id.unique(subset=["lot_id", "sold_date", "deal_status"], keep="first", maintain_order=True)
+        df = pl.concat([with_id, no_id], how="diagonal")
+    return df.with_columns(pl.lit(key).alias("source"))
+
+
 def _load_combined_deals_from_csv() -> pl.DataFrame:
-    """Load bnMAP exports, Analitic, KK2026 (Краснодарский край), and optional Crimea."""
+    """Load regional bnMAP exports (Крым, Краснодарский край, Адыгея, …) plus legacy sources."""
     frames: list[pl.DataFrame] = []
     bnmap_paths = resolve_bnmap_export_paths()
-    analitic_path = resolve_analitic_path()
-    crimea_path = resolve_crimea_path()
+    regional = find_regional_exports()
 
     loaded_paths: list[str] = []
     for bnmap_path in bnmap_paths:
@@ -291,30 +331,31 @@ def _load_combined_deals_from_csv() -> pl.DataFrame:
         )
         loaded_paths.append(bnmap_path)
 
-    if Path(analitic_path).exists() and not any(
-        paths_point_to_same_file(analitic_path, p) for p in loaded_paths
-    ):
-        frames.append(
-            load_deals(DataConfig(data_path=analitic_path)).with_columns(pl.lit("analitic").alias("source"))
-        )
+    for key, paths in regional.items():
+        paths = [p for p in paths if not any(paths_point_to_same_file(p, q) for q in loaded_paths)]
+        if paths:
+            frames.append(_load_regional(key, paths))
+            loaded_paths.extend(paths)
 
-    kk2026_path = resolve_kk2026_path()
-    if kk2026_path and not any(paths_point_to_same_file(kk2026_path, p) for p in loaded_paths):
-        same_as_analitic = paths_point_to_same_file(kk2026_path, analitic_path)
-        if not same_as_analitic:
+    if "kuban" not in regional:
+        analitic_path = resolve_analitic_path()
+        if Path(analitic_path).exists() and not any(paths_point_to_same_file(analitic_path, p) for p in loaded_paths):
+            frames.append(
+                load_deals(DataConfig(data_path=analitic_path)).with_columns(pl.lit("analitic").alias("source"))
+            )
+            loaded_paths.append(analitic_path)
+        kk2026_path = resolve_kk2026_path()
+        if kk2026_path and not any(paths_point_to_same_file(kk2026_path, p) for p in loaded_paths):
             frames.append(
                 load_deals(DataConfig(data_path=kk2026_path)).with_columns(pl.lit("kk2026").alias("source"))
             )
             loaded_paths.append(kk2026_path)
 
-    if Path(crimea_path).exists():
-        same_as_loaded = any(paths_point_to_same_file(crimea_path, p) for p in loaded_paths)
-        same_as_analitic = paths_point_to_same_file(crimea_path, analitic_path)
-        if not same_as_loaded and not same_as_analitic:
+    if "crimea" not in regional:
+        crimea_path = resolve_crimea_path()
+        if Path(crimea_path).exists() and not any(paths_point_to_same_file(crimea_path, p) for p in loaded_paths):
             try:
-                frames.append(
-                    load_crimea_deals(crimea_path).with_columns(pl.lit("crimea").alias("source"))
-                )
+                frames.append(load_crimea_deals(crimea_path).with_columns(pl.lit("crimea").alias("source")))
             except Exception:
                 pass
 
@@ -324,7 +365,104 @@ def _load_combined_deals_from_csv() -> pl.DataFrame:
     out = pl.concat(frames, how="diagonal")
     if "bank" in out.columns:
         out = out.with_columns(pl.col("bank").map_elements(normalize_bank, return_dtype=pl.Utf8).alias("bank"))
-    return out
+    return normalize_places(out)
+
+
+# ───────────────────────── Places: cities, districts, agglomerations ─────────────────────────
+
+_CITY_PREFIX = (
+    ("село ", "с."),
+    ("с. ", "с."),
+    ("пгт ", "пгт"),
+    ("пгт. ", "пгт"),
+    ("поселок ", "п."),
+    ("посёлок ", "п."),
+    ("п. ", "п."),
+    ("хутор ", "х."),
+    ("х. ", "х."),
+    ("станица ", "ст-ца"),
+    ("ст-ца ", "ст-ца"),
+    ("город ", ""),
+    ("г. ", ""),
+)
+_CITY_SUFFIX_FIX = {"пгт.": "пгт", "ст.": "ст-ца", "станица": "ст-ца", "село": "с.", "хутор": "х.", "поселок": "п."}
+
+
+def normalize_city(value: object) -> str | None:
+    """«пгт Дагомыс», «Дагомыс пгт.» → «Дагомыс пгт»; «село Сукко» → «Сукко с.»."""
+    if value is None:
+        return None
+    raw = " ".join(str(value).split())
+    if not raw:
+        return None
+    low = raw.lower()
+    for prefix, kind in _CITY_PREFIX:
+        if low.startswith(prefix):
+            name = raw[len(prefix):].strip()
+            return f"{name} {kind}".strip() if kind else name
+    head, _, tail = raw.rpartition(" ")
+    if head and tail.lower() in _CITY_SUFFIX_FIX:
+        return f"{head} {_CITY_SUFFIX_FIX[tail.lower()]}"
+    return raw
+
+
+_DISTRICT_FIX = {
+    "м.о. Анапа": "Анапа м.о.",
+    "с. Супсех": "Анапа м.о.",
+    "Каневской м.о": "Каневской м.о.",
+    "Крымский": "Крымск м.о.",
+}
+
+
+def normalize_district(value: object) -> str | None:
+    if value is None:
+        return None
+    raw = " ".join(str(value).split())
+    return _DISTRICT_FIX.get(raw, raw) or None
+
+
+# Resort agglomerations of Краснодарский край by municipal district.
+KUBAN_AGGLOMERATIONS = {
+    "Анапа м.о.": "Анапа",
+    "Сочи г.о.": "Сочи",
+    "Адлерский р-н": "Сочи",
+    "Лазаревский р-н": "Сочи",
+    "Новороссийск м.о.": "Новороссийск",
+    "Южный Новороссийск": "Новороссийск",
+    "Геленджик г.о.": "Геленджик",
+    "Туапсинский м.о.": "Туапсинский р-н",
+    "Темрюк м.о.": "Темрюк / Тамань",
+    "Горячий ключ г.о.": "Горячий Ключ",
+}
+KUBAN_OTHER = "Кубань: другие города"
+
+
+def normalize_places(df: pl.DataFrame) -> pl.DataFrame:
+    """Unify city / district spellings across exports and assign agglomerations."""
+    if df.is_empty():
+        return df
+    df = df.with_columns(
+        pl.col("city").map_elements(normalize_city, return_dtype=pl.Utf8).alias("city"),
+        pl.col("loc_district").map_elements(normalize_district, return_dtype=pl.Utf8).alias("loc_district"),
+    )
+    by_district = pl.col("loc_district").replace_strict(KUBAN_AGGLOMERATIONS, default=None, return_dtype=pl.Utf8)
+    by_city = (
+        pl.when(pl.col("city").is_in([normalize_city(c) for c in ANAPA_CITIES]))
+        .then(pl.lit("Анапа"))
+        .when(pl.col("city").is_in([normalize_city(c) for c in SOCHI_CITIES]))
+        .then(pl.lit("Сочи"))
+        .when(pl.col("city") == "Новороссийск")
+        .then(pl.lit("Новороссийск"))
+        .otherwise(None)
+    )
+    return df.with_columns(
+        pl.when(pl.col("source") == "crimea")
+        .then(pl.lit("Крым"))
+        .when(pl.col("source") == "adygea")
+        .then(pl.lit("Адыгея"))
+        .otherwise(pl.coalesce(by_district, by_city, pl.lit(KUBAN_OTHER)))
+        .alias("agglomeration")
+    )
 
 
 _BANK_ALIASES = (
@@ -510,12 +648,16 @@ def load_bnmap_deals(path: str, *, force_crimea_agglomeration: bool) -> pl.DataF
         return pl.col(col).cast(pl.Utf8) if col in df.columns else pl.lit(None).cast(pl.Utf8)
 
     extra = [
+        _txt("ID лота").alias("lot_id"),
         _txt("Залогодержатель/Банк").alias("bank"),
         _num("Кол-во месяцев обременения").alias("mortgage_months"),
         _txt("Класс").alias("class"),
         _num(exposure_col).alias("exposure_days"),
         (
-            pl.col("Старт продаж").cast(pl.Utf8).str.strptime(pl.Date, format="%d.%m.%Y", strict=False)
+            pl.col("Старт продаж")
+            .cast(pl.Utf8)
+            .str.strptime(pl.Date, format="%d.%m.%Y", strict=False)
+            .fill_null(pl.col("Старт продаж").cast(pl.Utf8).str.slice(0, 10).str.strptime(pl.Date, format="%Y-%m-%d", strict=False))
             if "Старт продаж" in df.columns
             else pl.lit(None).cast(pl.Date)
         ).alias("sales_start"),

@@ -5,6 +5,9 @@ from datetime import date
 import polars as pl
 
 
+SECONDARY_LOTS = ("машино-место", "кладовка")
+
+
 def apply_filters(
     df: pl.DataFrame,
     *,
@@ -57,6 +60,10 @@ def apply_filters(
 
     if type_lots:
         out = out.filter(pl.col("type_lot").is_in(type_lots))
+    else:
+        # By default count homes and commercial units only: parking spaces and storage
+        # rooms are sold by the thousand and drag averages down. Pick them in «Тип» to see them.
+        out = out.filter(~pl.col("type_lot").is_in(list(SECONDARY_LOTS)) | pl.col("type_lot").is_null())
 
     if budget_min is not None or budget_max is not None:
         out = out.filter(pl.col("est_budget").is_not_null())

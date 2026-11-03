@@ -438,6 +438,10 @@ def euler_data(df: pl.DataFrame, a: dict[str, Any]) -> dict:
         dff = dff.filter(pl.col("city").is_in(cities))
     if a.get("type_lot_single"):
         dff = dff.filter(pl.col("type_lot") == a["type_lot_single"])
+    else:
+        from aggregations import SECONDARY_LOTS
+
+        dff = dff.filter(~pl.col("type_lot").is_in(list(SECONDARY_LOTS)) | pl.col("type_lot").is_null())
     dff = dff.filter(
         pl.col("est_budget").is_not_null()
         & (pl.col("est_budget") >= lo)

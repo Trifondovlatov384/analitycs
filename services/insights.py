@@ -53,12 +53,20 @@ def _first_text(col: str) -> pl.Expr:
 # ───────────────────────── 1. Sales pace ─────────────────────────
 
 
+KUBAN_SOURCES = ("kuban", "analitic", "kk2026", "august2026", "july2026", "june2026", "may2026")
+
+
 def region_expr() -> pl.Expr:
-    """Exports cover different periods: Crimea (bnMAP) and the Kuban files end on different dates."""
-    return pl.when(pl.col("source") == "crimea").then(pl.lit("crimea")).otherwise(pl.lit("main")).alias("region")
+    """Each region's exports end on their own date (Crimea, Kuban, Adygea…), so windows are per region."""
+    return (
+        pl.when(pl.col("source").is_in(list(KUBAN_SOURCES)))
+        .then(pl.lit("kuban"))
+        .otherwise(pl.col("source"))
+        .alias("region")
+    )
 
 
-REGION_LABELS = {"crimea": "Крым", "main": "Краснодарский край"}
+REGION_LABELS = {"crimea": "Крым", "kuban": "Краснодарский край", "adygea": "Адыгея"}
 
 
 def _anchor_month(last_day: date, explicit: bool) -> int:
