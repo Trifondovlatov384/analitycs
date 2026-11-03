@@ -626,11 +626,14 @@ def load_bnmap_deals(path: str, *, force_crimea_agglomeration: bool) -> pl.DataF
     exposure_col = next((c for c in header if c.startswith(BNMAP_EXPOSURE_PREFIX)), None)
     if exposure_col:
         use_cols.append(exposure_col)
+    # Read everything as text: exports differ in which columns look numeric, and mixed
+    # inferred types break merging several regions. Numbers are parsed explicitly below.
     df = pl.read_csv(
         path,
         columns=use_cols or None,
         try_parse_dates=False,
         ignore_errors=True,
+        infer_schema_length=0,
     )
 
     def _num(col: str | None) -> pl.Expr:
