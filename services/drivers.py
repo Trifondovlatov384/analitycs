@@ -256,6 +256,20 @@ def _fmt_n(n: float) -> str:
     return f"{int(round(n)):,}".replace(",", " ")
 
 
+_MONTHS = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+
+
+def _mon(key: str) -> str:
+    """'2026-08' → 'авг 2026', '2026-Q1' → '1 кв. 2026'."""
+    k = str(key)
+    if "-Q" in k:
+        y, q = k.split("-Q")
+        return f"{q} кв. {y}"
+    if len(k) >= 7 and k[4] == "-":
+        return f"{_MONTHS[int(k[5:7]) - 1]} {k[:4]}"
+    return k
+
+
 def _signed_pct(v: float) -> str:
     return f"+{v:.0f}%" if v > 0 else f"−{abs(v):.0f}%" if v < 0 else "0%"
 
@@ -289,8 +303,13 @@ def _narrative(s1: dict, s0: dict, projects: list[dict], devs: list[dict], bulk:
         if top and abs(d) > 0:
             share = top_sum / d * 100
             names = ", ".join(f"{p['object']} ({_sign(p['delta'])})" for p in top)
-            if share >= 60:
-                lines.append(f"Изменение сосредоточено в нескольких проектах: {names} — это {min(share, 999):.0f}% от общего {_sign(d)}.")
+            if share > 100:
+                lines.append(
+                    f"Изменение дали несколько проектов: {names} — вместе {_sign(top_sum)} при общем {_sign(d)}, "
+                    "остальной рынок в сумме двигался в обратную сторону."
+                )
+            elif share >= 60:
+                lines.append(f"Изменение сосредоточено в нескольких проектах: {names} — это {share:.0f}% от общего {_sign(d)}.")
             else:
                 lines.append(f"Больше всего изменились: {names}.")
         new = [p for p in projects if p["is_new"]]
@@ -315,7 +334,7 @@ def _narrative(s1: dict, s0: dict, projects: list[dict], devs: list[dict], bulk:
 
     for ev in bulk[:2]:
         lines.append(
-            f"Оптовая покупка: {ev['object']}, {ev['month']} — {_fmt_n(ev['n'])} лотов из {_fmt_n(ev['month_total'])} сделок месяца."
+            f"Оптовая покупка: {ev['object']}, {_mon(ev['month'])} — {_fmt_n(ev['n'])} лотов из {_fmt_n(ev['month_total'])} сделок месяца."
         )
 
     if s1.get("mortgage_share") is not None and s0.get("mortgage_share") is not None:
@@ -330,14 +349,14 @@ def _narrative(s1: dict, s0: dict, projects: list[dict], devs: list[dict], bulk:
     for b in surging[:2]:
         lines.append(f"{b['name']}: {_fmt_n(b['prev'])} → {_fmt_n(b['cur'])} ипотек — резкий рост одного банка.")
     for p in programs[:3]:
-        period = p["from"] if p["from"] == p["to"] else f"{p['from']} — {p['to']}"
+        period = _mon(p["from"]) if p["from"] == p["to"] else f"{_mon(p['from'])} — {_mon(p['to'])}"
         lines.append(
             f"Похоже на программу с банком: {p['object']} × {p['bank']}, {period} — {p['hot_share']}% ипотек проекта "
             f"(в остальные месяцы {p['other_share']}%)."
         )
     for p in premiums[:2]:
         lines.append(
-            f"Проверить ипотеку без ПВ: {p['object']}, {p['quarter']} — ипотечные лоты в среднем на {p['premium']:.0f}% дороже "
+            f"Проверить ипотеку без ПВ: {p['object']}, {_mon(p['quarter'])} — ипотечные лоты в среднем на {p['premium']:.0f}% дороже "
             f"за м², чем купленные без ипотеки."
         )
 
