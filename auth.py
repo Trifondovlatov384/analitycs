@@ -28,9 +28,7 @@ LOGIN_HTML = """<!DOCTYPE html>
   <meta name="robots" content="noindex, nofollow, noarchive">
   <meta name="googlebot" content="noindex, nofollow, noarchive">
   <title>Вход — Аналитика сделок</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="/css/app.css?v=6">
+  <link rel="stylesheet" href="/css/app.css?v=8">
 </head>
 <body class="login-body">
   <main class="login-card">

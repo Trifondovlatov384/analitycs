@@ -271,9 +271,9 @@
     if (window.Chart) return Promise.resolve();
     if (chartReady) return chartReady;
     chartReady = new Promise((resolve) => {
-      // jsDelivr sometimes is slow/blocked — fall back to unpkg.
+      // Local copy (no third-party CDN); retried once if the deferred tag failed.
       const s = document.createElement("script");
-      s.src = "https://unpkg.com/chart.js@4.4.7/dist/chart.umd.min.js";
+      s.src = "/vendor/chart.umd.min.js?retry=1";
       s.onload = () => resolve();
       s.onerror = () => resolve();
       document.head.appendChild(s);
