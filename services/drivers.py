@@ -68,6 +68,10 @@ def _summary_stats(f: pl.DataFrame) -> dict[str, Any]:
         "bulk_share": _share(r["bulk"], n),
         "legal_share": _share(r["legal"], n),
         "resale_share": _share(r["resale"], n),
+        "mortgage": int(r["mort"]),
+        "cash": n - int(r["mort"]),
+        "long": int(r["long"]),
+        "bulk": int(r["bulk"]),
         "mortgage_share": _share(r["mort"], n),
         "long_share": _share(r["long"], r["mort"]),
         "sqm": round(r["sqm"]) if r["sqm"] else None,
@@ -141,6 +145,9 @@ def _project_table(cur: pl.DataFrame, prev: pl.DataFrame) -> list[dict]:
                 "delta_pct": _pct(n1, n0),
                 "is_new": n0 == 0 and n1 > 0,
                 "bulk": int(r.get("bulk1") or 0),
+                "mort": int(r.get("mort1") or 0),
+                "mort_prev": int(r.get("mort0") or 0),
+                "long": int(r.get("long1") or 0),
                 "mortgage_share": _share(r.get("mort1") or 0, n1),
                 "mortgage_share_prev": _share(r.get("mort0") or 0, n0),
                 "long_share": long1,
@@ -278,95 +285,272 @@ def _sign(n: float) -> str:
     return f"+{_fmt_n(n)}" if n > 0 else f"−{_fmt_n(abs(n))}" if n < 0 else "0"
 
 
-def _narrative(s1: dict, s0: dict, projects: list[dict], devs: list[dict], bulk: list[dict], programs: list[dict], premiums: list[dict], banks: list[dict]) -> list[str]:
-    lines: list[str] = []
+_MONTHS_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+
+
+def _day(iso: str | None) -> str:
+    if not iso:
+        return "—"
+    y, m, d = str(iso)[:10].split("-")
+    return f"{int(d)} {_MONTHS_GEN[int(m) - 1]} {y}"
+
+
+def _list(items: list[str], limit: int = 3) -> str:
+    items = [i for i in items if i]
+    if len(items) <= limit:
+        return ", ".join(items)
+    return ", ".join(items[:limit]) + f" и ещё {len(items) - limit}"
+
+
+def _scope(a: dict[str, Any], regions: list[str]) -> str:
+    """Human description of the market the filters select."""
+    parts: list[str] = []
+    agg = a.get("agglomeration")
+    if a.get("city"):
+        parts.append(_list(list(a["city"])))
+    elif agg and agg != "all":
+        parts.append(agg)
+    else:
+        parts.append("весь рынок: " + (" и ".join(regions) if regions else "все регионы"))
+    if a.get("developer"):
+        parts.append("застройщик " + _list(list(a["developer"]), 2))
+    if a.get("project"):
+        parts.append("проекты " + _list(list(a["project"]), 2))
+    types = a.get("type_lot") or []
+    parts.append(_list(list(types), 3) if types else "квартиры, апартаменты и коммерция")
+    lo, hi = a.get("budget_min"), a.get("budget_max")
+    if lo or hi:
+        parts.append(f"бюджет {lo or 0}–{hi or '∞'} млн ₽")
+    if a.get("source") and a["source"] != "all":
+        parts.append(f"источник {a['source']}")
+    return " · ".join(parts)
+
+
+def _item(topic: str, title: str, text: str, kind: str = "fact") -> dict:
+    """One finding: a short headline shown collapsed, and the full story behind it."""
+    return {"topic": topic, "title": title, "text": text, "kind": kind}
+
+
+def _narrative(
+    s1: dict,
+    s0: dict,
+    projects: list[dict],
+    devs: list[dict],
+    bulk: list[dict],
+    programs: list[dict],
+    premiums: list[dict],
+    banks: list[dict],
+    bank_projects: dict[str, list[tuple[str, int]]],
+    scope: str,
+    period: dict,
+    prev_period: dict,
+) -> list[dict]:
+    out: list[dict] = []
     d = s1["deals"] - s0["deals"]
     pct = _pct(s1["deals"], s0["deals"])
-    lines.append(
-        f"Сделок {_fmt_n(s1['deals'])} против {_fmt_n(s0['deals'])} годом раньше"
-        + (f" ({_signed_pct(pct)})." if pct is not None else ".")
+
+    # ── Market and period
+    out.append(
+        _item(
+            "Рынок",
+            f"Сделок {_fmt_n(s1['deals'])} против {_fmt_n(s0['deals'])}" + (f" ({_signed_pct(pct)})" if pct is not None else ""),
+            f"{scope}. Период {_day(period['from'])} — {_day(period['to'])}, сравнение с "
+            f"{_day(prev_period['from'])} — {_day(prev_period['to'])}. "
+            f"Сделок {_fmt_n(s1['deals'])} против {_fmt_n(s0['deals'])}"
+            + (f" ({_signed_pct(pct)})." if pct is not None else "."),
+            "lead",
+        )
     )
 
-    if s0["deals"] and (s1.get("bulk_share") or 0) - (s0.get("bulk_share") or 0) >= 2:
-        pct_nb = _pct(s1["deals_no_bulk"], s0["deals_no_bulk"])
-        lines.append(
-            f"Оптовые покупки выросли: {s0['bulk_share']:.0f}% → {s1['bulk_share']:.0f}% сделок. "
-            f"Без опта изменение {_signed_pct(pct_nb)}." if pct_nb is not None else
-            f"Оптовые покупки выросли: {s0['bulk_share']:.0f}% → {s1['bulk_share']:.0f}% сделок."
-        )
-
+    # ── Who moved
     if projects and d:
-        movers = [p for p in projects if (p["delta"] > 0) == (d > 0)]
-        movers.sort(key=lambda x: abs(x["delta"]), reverse=True)
+        movers = sorted((p for p in projects if (p["delta"] > 0) == (d > 0)), key=lambda x: abs(x["delta"]), reverse=True)
         top = movers[:3]
         top_sum = sum(p["delta"] for p in top)
-        if top and abs(d) > 0:
+        if top:
+            names = ", ".join(f"{p['object']} ({p['developer'] or '—'}): {_fmt_n(p['prev'])} → {_fmt_n(p['cur'])}" for p in top)
             share = top_sum / d * 100
-            names = ", ".join(f"{p['object']} ({_sign(p['delta'])})" for p in top)
             if share > 100:
-                lines.append(
-                    f"Изменение дали несколько проектов: {names} — вместе {_sign(top_sum)} при общем {_sign(d)}, "
-                    "остальной рынок в сумме двигался в обратную сторону."
+                tail = (
+                    f"Вместе {_sign(top_sum)} — больше всего изменения рынка ({_sign(d)}): "
+                    "остальные проекты в сумме двигались в обратную сторону."
                 )
             elif share >= 60:
-                lines.append(f"Изменение сосредоточено в нескольких проектах: {names} — это {share:.0f}% от общего {_sign(d)}.")
+                tail = f"Это {share:.0f}% всего изменения рынка ({_sign(d)}) — рост не общий, а в конкретных проектах."
             else:
-                lines.append(f"Больше всего изменились: {names}.")
-        new = [p for p in projects if p["is_new"]]
+                tail = f"Это {share:.0f}% изменения: движение довольно широкое, не только в лидерах."
+            out.append(
+                _item(
+                    "Кто дал изменение",
+                    f"{'Рост' if d > 0 else 'Падение'} дали {_list([p['object'] for p in top], 3)}",
+                    f"{'Выросли' if d > 0 else 'Упали'} сильнее всех: {names}. {tail}",
+                )
+            )
+        new = sorted((p for p in projects if p["is_new"]), key=lambda x: -x["cur"])
         if new:
-            new_sum = sum(p["cur"] for p in new)
-            lines.append(
-                f"Новые проекты (не было продаж годом раньше) дали {_fmt_n(new_sum)} сделок: "
-                + ", ".join(p["object"] for p in sorted(new, key=lambda x: -x["cur"])[:4]) + "."
+            out.append(
+                _item(
+                    "Кто дал изменение",
+                    f"Новые проекты: {_fmt_n(sum(p['cur'] for p in new))} сделок",
+                    f"Новые проекты (годом раньше продаж не было) дали {_fmt_n(sum(p['cur'] for p in new))} сделок — "
+                    f"{_share(sum(p['cur'] for p in new), s1['deals']):.0f}% рынка периода: "
+                    + _list([f"{p['object']} ({_fmt_n(p['cur'])})" for p in new], 4) + ".",
+                )
             )
-        against = [p for p in projects if (p["delta"] < 0) == (d > 0) and abs(p["delta"]) >= 20]
+        against = sorted((p for p in projects if (p["delta"] < 0) == (d > 0) and abs(p["delta"]) >= 20), key=lambda x: abs(x["delta"]), reverse=True)
         if against:
-            against.sort(key=lambda x: abs(x["delta"]), reverse=True)
-            lines.append(
-                ("При этом просели: " if d > 0 else "При этом выросли: ")
-                + ", ".join(f"{p['object']} ({_sign(p['delta'])})" for p in against[:3]) + "."
+            out.append(
+                _item(
+                    "Кто дал изменение",
+                    ("Против тренда просели: " if d > 0 else "Против тренда выросли: ") + _list([p["object"] for p in against], 2),
+                    ("Против тренда просели: " if d > 0 else "Против тренда выросли: ")
+                    + _list([f"{p['object']} ({_fmt_n(p['prev'])} → {_fmt_n(p['cur'])})" for p in against], 3) + ".",
+                )
             )
-
     if devs and d:
         top_dev = devs[0] if d > 0 else devs[-1]
         if abs(top_dev["delta"]) >= max(10, abs(d) * 0.4):
-            lines.append(f"Главный вклад — застройщик {top_dev['name']}: {_sign(top_dev['delta'])} сделок.")
+            out.append(
+                _item(
+                    "Кто дал изменение",
+                    f"Главный вклад — {top_dev['name']} ({_sign(top_dev['delta'])})",
+                    f"Застройщик {top_dev['name']}: {_fmt_n(top_dev['prev'])} → {_fmt_n(top_dev['cur'])} сделок ({_sign(top_dev['delta'])}) — "
+                    f"{abs(top_dev['delta']) / abs(d) * 100:.0f}% всего изменения рынка.",
+                )
+            )
 
-    for ev in bulk[:2]:
-        lines.append(
-            f"Оптовая покупка: {ev['object']}, {_mon(ev['month'])} — {_fmt_n(ev['n'])} лотов из {_fmt_n(ev['month_total'])} сделок месяца."
+    # ── Bulk
+    if s0["deals"] and (s1.get("bulk_share") or 0) - (s0.get("bulk_share") or 0) >= 2:
+        pct_nb = _pct(s1["deals_no_bulk"], s0["deals_no_bulk"])
+        txt = (
+            f"Оптовых сделок {_fmt_n(s1['bulk'])} против {_fmt_n(s0['bulk'])} "
+            f"({s0['bulk_share']:.0f}% → {s1['bulk_share']:.0f}% рынка). "
+        )
+        if pct_nb is not None:
+            txt += f"Без опта рынок изменился на {_signed_pct(pct_nb)}, а не на {_signed_pct(pct)} — часть роста дали крупные покупатели, а не розничный спрос."
+        out.append(
+            _item("Оптовые покупки", f"Опт вырос: {s0['bulk_share']:.0f}% → {s1['bulk_share']:.0f}% сделок", txt)
+        )
+    for ev in bulk[:3]:
+        out.append(
+            _item(
+                "Оптовые покупки",
+                f"Оптовая покупка: {ev['object']}, {_mon(ev['month'])} — {_fmt_n(ev['n'])} лотов",
+                f"{ev['object']} ({ev['developer'] or '—'}), {_mon(ev['month'])}: {_fmt_n(ev['n'])} лотов одним оптом "
+                f"из {_fmt_n(ev['month_total'])} сделок проекта за месяц.",
+            )
         )
 
-    if s1.get("mortgage_share") is not None and s0.get("mortgage_share") is not None:
+    # ── Mortgage
+    if s1.get("mortgage_share") is not None and s0.get("mortgage_share") is not None and s0["deals"]:
         dm = s1["mortgage_share"] - s0["mortgage_share"]
         if abs(dm) >= 3:
-            lines.append(f"Доля ипотеки {'выросла' if dm > 0 else 'снизилась'}: {s0['mortgage_share']:.0f}% → {s1['mortgage_share']:.0f}%.")
-    if s1.get("long_share") is not None and s0.get("long_share") is not None and s1["long_share"] - s0["long_share"] >= 5:
-        lines.append(f"Ипотек на 30 лет стало больше: {s0['long_share']:.0f}% → {s1['long_share']:.0f}% ипотечных сделок.")
+            pm, pc = _pct(s1["mortgage"], s0["mortgage"]), _pct(s1["cash"], s0["cash"])
+            txt = (
+                f"Доля ипотеки {'выросла' if dm > 0 else 'снизилась'} с {s0['mortgage_share']:.0f}% до {s1['mortgage_share']:.0f}% сделок. "
+                f"Ипотечных сделок {_fmt_n(s0['mortgage'])} → {_fmt_n(s1['mortgage'])}"
+                + (f" ({_signed_pct(pm)})" if pm is not None else "")
+                + f", без ипотеки (наличные и рассрочка) {_fmt_n(s0['cash'])} → {_fmt_n(s1['cash'])}"
+                + (f" ({_signed_pct(pc)})" if pc is not None else "")
+                + ". "
+            )
+            if pm is not None and pc is not None:
+                if pm > 0 and pm > pc + 10:
+                    txt += "Рынок сильнее держится на ипотеке, чем год назад."
+                elif pc > 0 and pc > pm + 10:
+                    txt += "Больше покупают без банка — наличными или в рассрочку от застройщика."
+                elif pm < 0 and pc < 0:
+                    txt += "Падают оба типа сделок."
+            movers = sorted(projects, key=lambda p: (p["mort"] - p["mort_prev"]) * (1 if dm > 0 else -1), reverse=True)
+            movers = [p for p in movers if (p["mort"] - p["mort_prev"]) * (1 if dm > 0 else -1) >= 10][:3]
+            if movers:
+                txt += (" Больше всего ипотечных сделок добавили: " if dm > 0 else " Сильнее всего ипотека упала в: ") + ", ".join(
+                    f"{p['object']} ({_fmt_n(p['mort_prev'])} → {_fmt_n(p['mort'])})" for p in movers
+                ) + "."
+            out.append(
+                _item(
+                    "Ипотека",
+                    f"Доля ипотеки {'выросла' if dm > 0 else 'снизилась'}: {s0['mortgage_share']:.0f}% → {s1['mortgage_share']:.0f}%",
+                    txt,
+                )
+            )
+    if s1.get("long_share") is not None and s0.get("long_share") is not None and abs(s1["long_share"] - s0["long_share"]) >= 5:
+        up = s1["long_share"] > s0["long_share"]
+        txt = (
+            f"Ипотек на 30 лет {'стало больше' if up else 'стало меньше'}: {s0['long_share']:.0f}% → {s1['long_share']:.0f}% ипотечных сделок "
+            f"({_fmt_n(s0['long'])} → {_fmt_n(s1['long'])}). "
+        )
+        if up:
+            txt += "Максимальный срок обычно берут по льготным программам (семейная, ИТ) и при субсидированной ставке от застройщика."
+        lead = sorted(
+            (p for p in projects if p["long_share"] is not None and p["long_share_prev"] is not None and p["mort"] >= 15),
+            key=lambda p: (p["long_share"] - p["long_share_prev"]) * (1 if up else -1),
+            reverse=True,
+        )[:3]
+        lead = [p for p in lead if abs(p["long_share"] - p["long_share_prev"]) >= 10]
+        if lead:
+            txt += " Сильнее всего изменилось в: " + ", ".join(
+                f"{p['object']} ({p['long_share_prev']:.0f}% → {p['long_share']:.0f}%)" for p in lead
+            ) + "."
+        out.append(
+            _item("Ипотека", f"Ипотеки на 30 лет: {s0['long_share']:.0f}% → {s1['long_share']:.0f}%", txt)
+        )
 
+    # ── Banks
     surging = [b for b in banks if b["prev"] >= 5 and b["cur"] >= 3 * b["prev"] and b["cur"] >= 30]
     surging += [b for b in banks if b["prev"] < 5 and b["cur"] >= 30]
     for b in surging[:2]:
-        lines.append(f"{b['name']}: {_fmt_n(b['prev'])} → {_fmt_n(b['cur'])} ипотек — резкий рост одного банка.")
-    for p in programs[:3]:
-        period = _mon(p["from"]) if p["from"] == p["to"] else f"{_mon(p['from'])} — {_mon(p['to'])}"
-        lines.append(
-            f"Похоже на программу с банком: {p['object']} × {p['bank']}, {period} — {p['hot_share']}% ипотек проекта "
-            f"(в остальные месяцы {p['other_share']}%)."
+        where = bank_projects.get(b["name"], [])
+        txt = f"{b['name']}: {_fmt_n(b['prev'])} → {_fmt_n(b['cur'])} ипотечных сделок — банк резко нарастил долю на этом рынке."
+        if where:
+            txt += " Основная часть — в проектах: " + ", ".join(f"{o} ({_fmt_n(n)})" for o, n in where[:3]) + "."
+        out.append(_item("Банки", f"{b['name']}: {_fmt_n(b['prev'])} → {_fmt_n(b['cur'])} ипотек", txt))
+    for p in programs[:4]:
+        period_txt = _mon(p["from"]) if p["from"] == p["to"] else f"{_mon(p['from'])} — {_mon(p['to'])}"
+        out.append(
+            _item(
+                "Банки",
+                f"Похоже на программу: {p['object']} × {p['bank']}, {period_txt}",
+                f"Похоже на программу застройщика с банком: {p['object']} × {p['bank']}, {period_txt}. "
+                f"В эти месяцы банк выдал {p['hot_share']}% ипотек проекта ({_fmt_n(p['deals'])} сделок), в остальные — {p['other_share']}%. "
+                "Стоит уточнить у застройщика условия: ставка, первый взнос, сроки акции.",
+                "check",
+            )
         )
-    for p in premiums[:2]:
-        lines.append(
-            f"Проверить ипотеку без ПВ: {p['object']}, {_mon(p['quarter'])} — ипотечные лоты в среднем на {p['premium']:.0f}% дороже "
-            f"за м², чем купленные без ипотеки."
+    for p in premiums[:3]:
+        out.append(
+            _item(
+                "Проверить",
+                f"Ипотека без ПВ? {p['object']}, {_mon(p['quarter'])}: +{p['premium']:.0f}% к цене м²",
+                f"{p['object']}, {_mon(p['quarter'])}: м² в ипотечных сделках {_fmt_n(p['mortgage_sqm'])} ₽, "
+                f"без ипотеки {_fmt_n(p['cash_sqm'])} ₽ (+{p['premium']:.0f}%, {p['n_mortgage']} и {p['n_cash']} сделок). "
+                "Такой разрыв бывает, когда цену в договоре поднимают, чтобы покрыть первый взнос.",
+                "check",
+            )
         )
 
+    # ── Prices
     price_up = [p for p in projects if (p["sqm_pct"] or 0) >= 10 and (p["delta_pct"] or 0) <= -20 and p["prev"] >= 30]
     price_dn = [p for p in projects if (p["sqm_pct"] or 0) <= -7 and (p["delta_pct"] or 0) >= 20 and p["cur"] >= 30]
     for p in price_up[:2]:
-        lines.append(f"{p['object']}: цена м² {_signed_pct(p['sqm_pct'])}, продажи {_signed_pct(p['delta_pct'])} — похоже, подорожание затормозило спрос.")
+        out.append(
+            _item(
+                "Цены",
+                f"{p['object']}: цена {_signed_pct(p['sqm_pct'])}, продажи {_signed_pct(p['delta_pct'])}",
+                f"{p['object']}: м² {_fmt_n(p['sqm_prev'])} → {_fmt_n(p['sqm'])} ₽ ({_signed_pct(p['sqm_pct'])}), "
+                f"сделок {_fmt_n(p['prev'])} → {_fmt_n(p['cur'])} ({_signed_pct(p['delta_pct'])}) — похоже, подорожание затормозило спрос.",
+            )
+        )
     for p in price_dn[:2]:
-        lines.append(f"{p['object']}: цена м² {_signed_pct(p['sqm_pct'])}, продажи {_signed_pct(p['delta_pct'])} — снижение цены разогнало продажи.")
-    return lines
+        out.append(
+            _item(
+                "Цены",
+                f"{p['object']}: цена {_signed_pct(p['sqm_pct'])}, продажи {_signed_pct(p['delta_pct'])}",
+                f"{p['object']}: м² {_fmt_n(p['sqm_prev'])} → {_fmt_n(p['sqm'])} ₽ ({_signed_pct(p['sqm_pct'])}), "
+                f"сделок {_fmt_n(p['prev'])} → {_fmt_n(p['cur'])} ({_signed_pct(p['delta_pct'])}) — снижение цены разогнало продажи.",
+            )
+        )
+    return out
 
 
 def sales_drivers(df: pl.DataFrame, a: dict[str, Any]) -> dict:
@@ -403,6 +587,20 @@ def sales_drivers(df: pl.DataFrame, a: dict[str, Any]) -> dict:
         key=lambda x: -x["cur"],
     )[:12]
 
+    # Where each fast-growing bank got its deals (for the narrative).
+    bank_projects: dict[str, list[tuple[str, int]]] = {}
+    m1 = cur.filter(pl.col("_mort") & pl.col("_bank").is_not_null())
+    for b in banks:
+        if b["cur"] >= 30:
+            rows_b = m1.filter(pl.col("_bank") == b["name"]).group_by("object").len().sort("len", descending=True).head(3)
+            bank_projects[b["name"]] = [(r["object"], int(r["len"])) for r in rows_b.iter_rows(named=True)]
+
+    regions = []
+    for src, label in (("crimea", "Крым"), ("kuban", "Краснодарский край"), ("adygea", "Адыгея")):
+        if cur.filter(pl.col("source") == src).height:
+            regions.append(label)
+    scope = _scope(a, regions)
+
     bulk = _bulk_events(cur)
     programs = _bank_programs(cur)
     premiums = _price_premiums(cur)
@@ -413,13 +611,18 @@ def sales_drivers(df: pl.DataFrame, a: dict[str, Any]) -> dict:
     cur_days = cur.select(pl.col("sold_date").min().alias("a"), pl.col("sold_date").max().alias("b")).row(0, named=True)
     prev_days = prev.select(pl.col("sold_date").min().alias("a"), pl.col("sold_date").max().alias("b")).row(0, named=True) if not prev.is_empty() else {"a": None, "b": None}
 
+    period = {"from": str(cur_days["a"]), "to": str(cur_days["b"])}
+    prev_period = {"from": str(prev_days["a"]) if prev_days["a"] else None, "to": str(prev_days["b"]) if prev_days["b"] else None}
     return {
         "message": None,
-        "period": {"from": str(cur_days["a"]), "to": str(cur_days["b"])},
-        "prev_period": {"from": str(prev_days["a"]) if prev_days["a"] else None, "to": str(prev_days["b"]) if prev_days["b"] else None},
+        "scope": scope,
+        "period": period,
+        "prev_period": prev_period,
         "summary": s1,
         "summary_prev": s0,
-        "narrative": _narrative(s1, s0, projects, devs, bulk, programs, premiums, banks),
+        "narrative": _narrative(
+            s1, s0, projects, devs, bulk, programs, premiums, banks, bank_projects, scope, period, prev_period
+        ),
         "contributions": [{"name": p["object"], "value": p["delta"]} for p in movers],
         "developers": devs[:8] + [x for x in devs[-5:] if x not in devs[:8]],
         "projects": projects[:300],

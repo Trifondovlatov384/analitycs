@@ -1540,9 +1540,22 @@
         return;
       }
       $("#drv-sub").textContent = `${shortDate(d.period.from)} — ${shortDate(d.period.to)} против ${shortDate(d.prev_period.from)} — ${shortDate(d.prev_period.to)}`;
-      list.innerHTML = (d.narrative || [])
-        .map((t, i) => `<li class="${i === 0 ? "is-lead" : /^(Проверить|Похоже)/.test(t) ? "is-check" : ""}">${escapeHtml(t)}</li>`)
-        .join("");
+      // Each finding: a short headline; click opens the full story. The first one names the market.
+      const items = (d.narrative || []).map((x) => (typeof x === "string" ? { topic: "", title: x, text: "", kind: "fact" } : x));
+      const lead = items.find((x) => x.kind === "lead");
+      const rest = items.filter((x) => x !== lead);
+      let lastTopic = "";
+      list.innerHTML =
+        (lead
+          ? `<li class="drv-lead"><div class="drv-lead-title">${escapeHtml(lead.title)}</div><div class="drv-lead-text">${escapeHtml(lead.text)}</div></li>`
+          : "") +
+        rest
+          .map((x) => {
+            const head = x.topic && x.topic !== lastTopic ? `<li class="drv-topic">${escapeHtml(x.topic)}</li>` : "";
+            lastTopic = x.topic;
+            return `${head}<li class="drv-item ${x.kind === "check" ? "is-check" : ""}"><details><summary>${escapeHtml(x.title)}</summary><p>${escapeHtml(x.text)}</p></details></li>`;
+          })
+          .join("");
 
       const s1 = d.summary, s0 = d.summary_prev;
       const pctFoot = (a, b) => (b ? `${deltaHtml(((a - b) / b) * 100)}<span>было ${nf0.format(b)}</span>` : "");
