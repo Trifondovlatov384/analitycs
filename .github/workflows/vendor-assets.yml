@@ -1,0 +1,44 @@
+name: Vendor front-end assets
+
+# Puts Chart.js and the Inter font into public/vendor so the site does not depend on
+# third-party CDNs (jsDelivr, unpkg, Google Fonts), which are slow or blocked for some
+# users in Russia. Run by hand from the Actions tab; files are checked by SHA-256.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  vendor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download pinned packages
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          cd "$tmp"
+          npm pack -q chart.js@4.4.7 @fontsource-variable/inter@5.1.0
+          mkdir chart inter
+          tar xzf chart.js-4.4.7.tgz -C chart
+          tar xzf fontsource-variable-inter-5.1.0.tgz -C inter
+          dest="$GITHUB_WORKSPACE/public/vendor"
+          mkdir -p "$dest"
+          cp chart/package/dist/chart.umd.js "$dest/chart.umd.min.js"
+          cp inter/package/files/inter-latin-wght-normal.woff2 "$dest/"
+          cp inter/package/files/inter-cyrillic-wght-normal.woff2 "$dest/"
+          cd "$dest"
+          cat > SHA256SUMS <<'SUMS'
+          2812cb8825fdc57469eb2f7bb055e9429244e599920511ee477e828499b632cb  chart.umd.min.js
+          62cc01daef72c3ea76a258445368d2f4ab8d05a91f91c53fd12f7c42e3325942  inter-cyrillic-wght-normal.woff2
+          f052ee44c3728dfd23aba8a4567150bc314d23903026fbb6ad089422c2df56af  inter-latin-wght-normal.woff2
+          SUMS
+          sed -i 's/^ *//' SHA256SUMS
+          sha256sum -c SHA256SUMS
+      - name: Commit
+        run: |
+          git config user.name "vendor-bot"
+          git config user.email "vendor-bot@users.noreply.github.com"
+          git add public/vendor
+          if git diff --cached --quiet; then echo "No changes"; else git commit -m "Vendor Chart.js 4.4.7 and Inter font" && git push; fi
