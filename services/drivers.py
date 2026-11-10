@@ -256,6 +256,10 @@ def _fmt_n(n: float) -> str:
     return f"{int(round(n)):,}".replace(",", " ")
 
 
+def _signed_pct(v: float) -> str:
+    return f"+{v:.0f}%" if v > 0 else f"−{abs(v):.0f}%" if v < 0 else "0%"
+
+
 def _sign(n: float) -> str:
     return f"+{_fmt_n(n)}" if n > 0 else f"−{_fmt_n(abs(n))}" if n < 0 else "0"
 
@@ -266,14 +270,14 @@ def _narrative(s1: dict, s0: dict, projects: list[dict], devs: list[dict], bulk:
     pct = _pct(s1["deals"], s0["deals"])
     lines.append(
         f"Сделок {_fmt_n(s1['deals'])} против {_fmt_n(s0['deals'])} годом раньше"
-        + (f" ({'+' if pct > 0 else ''}{pct:.0f}%)." if pct is not None else ".")
+        + (f" ({_signed_pct(pct)})." if pct is not None else ".")
     )
 
     if s0["deals"] and (s1.get("bulk_share") or 0) - (s0.get("bulk_share") or 0) >= 2:
         pct_nb = _pct(s1["deals_no_bulk"], s0["deals_no_bulk"])
         lines.append(
             f"Оптовые покупки выросли: {s0['bulk_share']:.0f}% → {s1['bulk_share']:.0f}% сделок. "
-            f"Без опта изменение {('+' if (pct_nb or 0) > 0 else '')}{pct_nb:.0f}%." if pct_nb is not None else
+            f"Без опта изменение {_signed_pct(pct_nb)}." if pct_nb is not None else
             f"Оптовые покупки выросли: {s0['bulk_share']:.0f}% → {s1['bulk_share']:.0f}% сделок."
         )
 
@@ -340,9 +344,9 @@ def _narrative(s1: dict, s0: dict, projects: list[dict], devs: list[dict], bulk:
     price_up = [p for p in projects if (p["sqm_pct"] or 0) >= 10 and (p["delta_pct"] or 0) <= -20 and p["prev"] >= 30]
     price_dn = [p for p in projects if (p["sqm_pct"] or 0) <= -7 and (p["delta_pct"] or 0) >= 20 and p["cur"] >= 30]
     for p in price_up[:2]:
-        lines.append(f"{p['object']}: цена м² +{p['sqm_pct']:.0f}%, продажи {p['delta_pct']:.0f}% — похоже, подорожание затормозило спрос.")
+        lines.append(f"{p['object']}: цена м² {_signed_pct(p['sqm_pct'])}, продажи {_signed_pct(p['delta_pct'])} — похоже, подорожание затормозило спрос.")
     for p in price_dn[:2]:
-        lines.append(f"{p['object']}: цена м² {p['sqm_pct']:.0f}%, продажи +{p['delta_pct']:.0f}% — снижение цены разогнало продажи.")
+        lines.append(f"{p['object']}: цена м² {_signed_pct(p['sqm_pct'])}, продажи {_signed_pct(p['delta_pct'])} — снижение цены разогнало продажи.")
     return lines
 
 
@@ -360,8 +364,13 @@ def sales_drivers(df: pl.DataFrame, a: dict[str, Any]) -> dict:
     projects = _project_table(cur, prev)
 
     dev = (
-        cur.group_by("developer").len().rename({"len": "cur"})
-        .join(prev.group_by("developer").len().rename({"len": "prev"}), on="developer", how="full", coalesce=True)
+        cur.group_by("developer").len().select("developer", pl.col("len").cast(pl.Int64).alias("cur"))
+        .join(
+            prev.group_by("developer").len().select("developer", pl.col("len").cast(pl.Int64).alias("prev")),
+            on="developer",
+            how="full",
+            coalesce=True,
+        )
         .fill_null(0)
         .with_columns((pl.col("cur") - pl.col("prev")).alias("delta"))
         .filter(pl.col("developer").is_not_null() & ((pl.col("cur") >= MIN_PROJECT_DEALS) | (pl.col("prev") >= MIN_PROJECT_DEALS)))
