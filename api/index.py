@@ -190,6 +190,12 @@ def css_files(filename: str):
     return send_from_directory(_public_file("css"), filename)
 
 
+@app.get("/vendor/<path:filename>")
+def vendor_assets(filename: str):
+    # On Vercel these are served as static files; this route covers local runs and self-hosting.
+    return send_from_directory(_public_file("vendor"), filename, max_age=31536000)
+
+
 @app.get("/js/<path:filename>")
 def js_files(filename: str):
     if not session.get(SESSION_FLAG):
