@@ -60,6 +60,7 @@ def _summary_stats(f: pl.DataFrame) -> dict[str, Any]:
         pl.col("_resale").sum().alias("resale"),
         pl.col("_mort").sum().alias("mort"),
         pl.col("_long").sum().alias("long"),
+        (~pl.col("_mort") & ~pl.col("_bulk")).sum().alias("cash_retail"),
         pl.col("price_sqm").filter(pl.col("price_sqm") > 0).median().alias("sqm"),
     ).row(0, named=True)
     return {
@@ -70,6 +71,7 @@ def _summary_stats(f: pl.DataFrame) -> dict[str, Any]:
         "resale_share": _share(r["resale"], n),
         "mortgage": int(r["mort"]),
         "cash": n - int(r["mort"]),
+        "cash_retail": int(r["cash_retail"]),
         "long": int(r["long"]),
         "bulk": int(r["bulk"]),
         "mortgage_share": _share(r["mort"], n),
@@ -353,7 +355,8 @@ def _narrative(
     out.append(
         _item(
             "Рынок",
-            f"Сделок {_fmt_n(s1['deals'])} против {_fmt_n(s0['deals'])}" + (f" ({_signed_pct(pct)})" if pct is not None else ""),
+            f"{scope.split(' · ')[0][:1].upper() + scope.split(' · ')[0][1:]}: {_fmt_n(s1['deals'])} сделок против {_fmt_n(s0['deals'])} годом раньше"
+            + (f" ({_signed_pct(pct)})" if pct is not None else ""),
             f"{scope}. Период {_day(period['from'])} — {_day(period['to'])}, сравнение с "
             f"{_day(prev_period['from'])} — {_day(prev_period['to'])}. "
             f"Сделок {_fmt_n(s1['deals'])} против {_fmt_n(s0['deals'])}"
@@ -454,13 +457,23 @@ def _narrative(
                 + (f" ({_signed_pct(pc)})" if pc is not None else "")
                 + ". "
             )
+            bulk_cash = (s1["cash"] - s1["cash_retail"]) - (s0["cash"] - s0["cash_retail"])
+            pcr = _pct(s1["cash_retail"], s0["cash_retail"])
+            if bulk_cash >= 20 and pcr is not None:
+                txt += (
+                    f"Но часть сделок без ипотеки — оптовые покупки: без них сделок без ипотеки "
+                    f"{_fmt_n(s0['cash_retail'])} → {_fmt_n(s1['cash_retail'])} ({_signed_pct(pcr)}). "
+                )
+                pc = pcr
             if pm is not None and pc is not None:
                 if pm > 0 and pm > pc + 10:
-                    txt += "Рынок сильнее держится на ипотеке, чем год назад."
+                    txt += "Вывод: рынок сильнее держится на ипотеке, чем год назад."
                 elif pc > 0 and pc > pm + 10:
-                    txt += "Больше покупают без банка — наличными или в рассрочку от застройщика."
+                    txt += "Вывод: розничные покупатели чаще берут без банка — наличными или в рассрочку от застройщика."
                 elif pm < 0 and pc < 0:
-                    txt += "Падают оба типа сделок."
+                    txt += "Вывод: падают оба типа сделок."
+                else:
+                    txt += "Вывод: ипотечные и прочие сделки меняются примерно одинаково."
             movers = sorted(projects, key=lambda p: (p["mort"] - p["mort_prev"]) * (1 if dm > 0 else -1), reverse=True)
             movers = [p for p in movers if (p["mort"] - p["mort_prev"]) * (1 if dm > 0 else -1) >= 10][:3]
             if movers:
