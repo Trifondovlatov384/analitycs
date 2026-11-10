@@ -474,10 +474,12 @@ def _narrative(
                     txt += "Вывод: падают оба типа сделок."
                 else:
                     txt += "Вывод: ипотечные и прочие сделки меняются примерно одинаково."
-            movers = sorted(projects, key=lambda p: (p["mort"] - p["mort_prev"]) * (1 if dm > 0 else -1), reverse=True)
-            movers = [p for p in movers if (p["mort"] - p["mort_prev"]) * (1 if dm > 0 else -1) >= 10][:3]
+            grew = s1["mortgage"] >= s0["mortgage"]
+            sgn = 1 if grew else -1
+            movers = sorted(projects, key=lambda p: (p["mort"] - p["mort_prev"]) * sgn, reverse=True)
+            movers = [p for p in movers if (p["mort"] - p["mort_prev"]) * sgn >= 10][:3]
             if movers:
-                txt += (" Больше всего ипотечных сделок добавили: " if dm > 0 else " Сильнее всего ипотека упала в: ") + ", ".join(
+                txt += (" Больше всего ипотечных сделок добавили: " if grew else " Сильнее всего ипотека упала в: ") + ", ".join(
                     f"{p['object']} ({_fmt_n(p['mort_prev'])} → {_fmt_n(p['mort'])})" for p in movers
                 ) + "."
             out.append(
