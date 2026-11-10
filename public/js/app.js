@@ -1539,7 +1539,7 @@
         $$(`#${P} .kpi-value`).forEach((el) => { el.classList.remove("skeleton"); el.textContent = "—"; });
         return;
       }
-      $("#drv-sub").textContent = `${shortDate(d.period.from)} — ${shortDate(d.period.to)} против ${shortDate(d.prev_period.from)} — ${shortDate(d.prev_period.to)}`;
+      $("#drv-sub").textContent = `${shortDate(d.period.from)} — ${shortDate(d.period.to)} против ${shortDate(d.prev_period.from)} — ${shortDate(d.prev_period.to)}. Нажмите на вывод, чтобы раскрыть подробности`;
       // Each finding: a short headline; click opens the full story. The first one names the market.
       const items = (d.narrative || []).map((x) => (typeof x === "string" ? { topic: "", title: x, text: "", kind: "fact" } : x));
       const lead = items.find((x) => x.kind === "lead");
