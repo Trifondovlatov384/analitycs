@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#f5f4f0">
   <title>Сделки · аналитика</title>
   <link rel="preload" href="/vendor/inter-cyrillic-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="/css/app.css?v=8">
+  <link rel="stylesheet" href="/css/app.css?v=9">
 </head>
 <body>
   <div class="app" id="app">
@@ -82,6 +82,52 @@
               <div id="chart-top-mortgage" class="list-wrap skeleton"></div>
             </article>
           </div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="tab_drivers" id="panel-tab_drivers">
+        <div class="widgets">
+          <article class="widget">
+            <header class="widget-head"><div><h2 class="widget-title">Почему изменились продажи</h2><p class="widget-sub" id="drv-sub">Сравнение с тем же периодом годом раньше</p></div></header>
+            <ul class="drv-list skeleton skeleton-block" id="drv-narrative"></ul>
+            <p class="note">Выводы строятся только по реестру сделок. Канала продаж (агентство или напрямую) и реальной цены договора в нём нет, поэтому «программа с банком» и «ипотека без ПВ» — сигналы для проверки, а не факт.</p>
+          </article>
+          <div class="kpi-grid" id="drv-kpis">
+            <article class="kpi" data-kpi="deals"><div class="kpi-label">Сделок</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+            <article class="kpi" data-kpi="deals_no_bulk"><div class="kpi-label">Без оптовых</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+            <article class="kpi" data-kpi="bulk_share"><div class="kpi-label">Доля опта</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+            <article class="kpi" data-kpi="mortgage_share"><div class="kpi-label">Доля ипотеки</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+            <article class="kpi" data-kpi="long_share"><div class="kpi-label">Ипотеки на 30 лет</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+            <article class="kpi" data-kpi="resale_share"><div class="kpi-label">Доля переуступок</div><div class="kpi-value skeleton">—</div><div class="kpi-foot"></div></article>
+          </div>
+          <div class="widgets-2">
+            <article class="widget widget--chart">
+              <header class="widget-head"><div><h2 class="widget-title">Кто дал изменение</h2><p class="widget-sub">Прирост или падение сделок по проектам</p></div></header>
+              <div class="chart-wrap chart-wrap--xl skeleton" id="chart-drv-contrib"></div>
+            </article>
+            <article class="widget widget--chart">
+              <header class="widget-head"><div><h2 class="widget-title">Банки</h2><p class="widget-sub">Ипотечных сделок: было и стало</p></div></header>
+              <div class="chart-wrap chart-wrap--xl skeleton" id="chart-drv-banks"></div>
+            </article>
+          </div>
+          <div class="widgets-2">
+            <article class="widget widget--table">
+              <header class="widget-head"><div><h2 class="widget-title">Похоже на программы с банком</h2><p class="widget-sub">Банк резко занял большую долю ипотек проекта на несколько месяцев</p></div></header>
+              <div id="table-drv-programs" class="table-wrap skeleton"></div>
+            </article>
+            <article class="widget widget--table">
+              <header class="widget-head"><div><h2 class="widget-title">Оптовые покупки</h2><p class="widget-sub">От 10 лотов в проекте за месяц</p></div></header>
+              <div id="table-drv-bulk" class="table-wrap skeleton"></div>
+            </article>
+          </div>
+          <article class="widget widget--table">
+            <header class="widget-head"><div><h2 class="widget-title">Проверить: ипотека без ПВ</h2><p class="widget-sub">Ипотечные лоты заметно дороже за м², чем купленные без ипотеки, в том же проекте и квартале (от 12%)</p></div></header>
+            <div id="table-drv-premiums" class="table-wrap skeleton"></div>
+          </article>
+          <article class="widget widget--table">
+            <header class="widget-head"><div><h2 class="widget-title">Проекты: было и стало</h2><p class="widget-sub">От 10 сделок в одном из периодов</p></div></header>
+            <div id="table-drv-projects" class="table-wrap skeleton"></div>
+          </article>
         </div>
       </section>
 
@@ -271,6 +317,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="/vendor/chart.umd.min.js" defer></script>
-  <script src="/js/app.js?v=8" defer></script>
+  <script src="/js/app.js?v=9" defer></script>
 </body>
 </html>

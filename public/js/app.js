@@ -1,6 +1,7 @@
 (() => {
   const PUBLIC_TABS = [
     ["tab_deals", "Дашборд"],
+    ["tab_drivers", "Факторы"],
     ["tab_pace", "Темп продаж"],
     ["tab_price", "Цена м²"],
     ["tab_mortgage", "Ипотека"],
@@ -844,7 +845,7 @@
       blocks.push(filterMulti("developer", "Застройщик", dims.developer || [], f.developer));
       blocks.push(filterMulti("project", "Проект", dims.project || [], f.project));
       blocks.push(filterMulti("type_lot", "Тип", dims.type_lot || [], f.type_lot));
-    } else if (state.tab === "tab_pace" || state.tab === "tab_mortgage") {
+    } else if (state.tab === "tab_pace" || state.tab === "tab_mortgage" || state.tab === "tab_drivers") {
       blocks.push(filterMulti("developer", "Застройщик", dims.developer || [], f.developer));
       blocks.push(filterMulti("type_lot", "Тип", dims.type_lot || [], f.type_lot));
     } else if (state.tab === "tab_price") {
@@ -1462,6 +1463,155 @@
     }, [$("#chart-banks"), $("#chart-terms"), $("#chart-mortgage-monthly"), $("#table-mortgage")]);
   }
 
+  /* ───────────────────────── Drivers ───────────────────────── */
+
+  function ppHtml(cur, prev, { pp = true } = {}) {
+    if (cur == null) return "";
+    if (prev == null) return "";
+    const d = cur - prev;
+    const cls = Math.abs(d) < 0.5 ? "delta--flat" : d > 0 ? "delta--up" : "delta--down";
+    const arrow = Math.abs(d) < 0.5 ? "→" : d > 0 ? "↑" : "↓";
+    return `<span class="delta ${cls}">${arrow} ${nf1.format(Math.abs(d))}${pp ? " п.п." : ""}</span><span>было ${nf1.format(prev)}${pp ? "%" : ""}</span>`;
+  }
+
+  function divergingBar(key, container, labels, values) {
+    destroyChart(key);
+    if (!window.Chart) return emptyState(container, "Графики не загрузились");
+    if (!labels.length) return emptyState(container, "Нет данных");
+    const canvas = ensureCanvas(container);
+    const c = palette();
+    state.charts[key] = new Chart(canvas, {
+      type: "bar",
+      data: { labels, datasets: [{ data: values, backgroundColor: values.map((v) => (v >= 0 ? cssVar("--up") || "#15803d" : cssVar("--down") || "#b42318")), borderRadius: 4, maxBarThickness: 16 }] },
+      options: {
+        indexAxis: "y",
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ` ${ctx.parsed.x > 0 ? "+" : ""}${nf0.format(ctx.parsed.x)} сделок` } } },
+        scales: {
+          x: { grid: { color: c.line }, border: { display: false }, ticks: { callback: (v) => (v > 0 ? "+" : "") + nf0.format(v) } },
+          y: { grid: { display: false }, border: { display: false }, ticks: { autoSkip: false, color: c.ink } },
+        },
+      },
+    });
+  }
+
+  function groupedBanks(key, container, banks) {
+    destroyChart(key);
+    if (!window.Chart) return emptyState(container, "Графики не загрузились");
+    if (!banks.length) return emptyState(container, "Банк в данных не указан");
+    const canvas = ensureCanvas(container);
+    const c = palette();
+    state.charts[key] = new Chart(canvas, {
+      type: "bar",
+      data: {
+        labels: banks.map((b) => b.name),
+        datasets: [
+          { label: "Годом раньше", data: banks.map((b) => b.prev), backgroundColor: c.faint, borderRadius: 4, maxBarThickness: 12 },
+          { label: "Сейчас", data: banks.map((b) => b.cur), backgroundColor: c.sea, borderRadius: 4, maxBarThickness: 12 },
+        ],
+      },
+      options: {
+        indexAxis: "y",
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { position: "top", align: "end" } },
+        scales: {
+          x: { beginAtZero: true, grid: { color: c.line }, border: { display: false } },
+          y: { grid: { display: false }, border: { display: false }, ticks: { autoSkip: false, color: c.ink } },
+        },
+      },
+    });
+  }
+
+  async function loadDriversTab() {
+    const P = "panel-tab_drivers";
+    const ids = ["chart-drv-contrib", "chart-drv-banks", "table-drv-programs", "table-drv-bulk", "table-drv-premiums", "table-drv-projects"];
+    $$(`#${P} .kpi-value`).forEach((el) => el.classList.add("skeleton"));
+    const list = $("#drv-narrative");
+    list.classList.add("skeleton", "skeleton-block");
+    await track(async (signal) => {
+      const d = await api("/api/drivers", { signal });
+      list.classList.remove("skeleton", "skeleton-block");
+      if (d.message) {
+        list.innerHTML = `<li class="is-lead">${escapeHtml(d.message)}</li>`;
+        ids.forEach((id) => emptyState($("#" + id), d.message));
+        $$(`#${P} .kpi-value`).forEach((el) => { el.classList.remove("skeleton"); el.textContent = "—"; });
+        return;
+      }
+      $("#drv-sub").textContent = `${shortDate(d.period.from)} — ${shortDate(d.period.to)} против ${shortDate(d.prev_period.from)} — ${shortDate(d.prev_period.to)}`;
+      list.innerHTML = (d.narrative || [])
+        .map((t, i) => `<li class="${i === 0 ? "is-lead" : /^(Проверить|Похоже)/.test(t) ? "is-check" : ""}">${escapeHtml(t)}</li>`)
+        .join("");
+
+      const s1 = d.summary, s0 = d.summary_prev;
+      const pctFoot = (a, b) => (b ? `${deltaHtml(((a - b) / b) * 100)}<span>было ${nf0.format(b)}</span>` : "");
+      setKpi(P, "deals", nf0.format(s1.deals), pctFoot(s1.deals, s0.deals));
+      setKpi(P, "deals_no_bulk", nf0.format(s1.deals_no_bulk), pctFoot(s1.deals_no_bulk, s0.deals_no_bulk));
+      for (const k of ["bulk_share", "mortgage_share", "long_share", "resale_share"]) {
+        setKpi(P, k, s1[k] != null ? `${nf1.format(s1[k])}<small>%</small>` : "—", ppHtml(s1[k], s0[k]));
+      }
+
+      divergingBar("drv-contrib", $("#chart-drv-contrib"), d.contributions.map((x) => x.name), d.contributions.map((x) => x.value));
+      groupedBanks("drv-banks", $("#chart-drv-banks"), (d.banks || []).slice(0, 10));
+
+      const monthsText = (r) => (r.from === r.to ? monthLabelFull(r.from) : `${monthLabel(r.from)} — ${monthLabel(r.to)}`);
+      if ((d.bank_programs || []).length) {
+        renderTable($("#table-drv-programs"), d.bank_programs, [
+          { key: "object", label: "Проект" },
+          { key: "bank", label: "Банк" },
+          { key: "from", label: "Месяцы", render: (_v, r) => escapeHtml(monthsText(r)) },
+          { key: "hot_share", label: "Доля в эти месяцы, %", num: true },
+          { key: "other_share", label: "В остальные, %", num: true },
+          { key: "deals", label: "Ипотек", num: true },
+        ]);
+      } else emptyState($("#table-drv-programs"), "Не найдено", "Ни один банк не выделяется в отдельные месяцы");
+
+      if ((d.bulk_events || []).length) {
+        renderTable($("#table-drv-bulk"), d.bulk_events, [
+          { key: "object", label: "Проект" },
+          { key: "developer", label: "Застройщик" },
+          { key: "month", label: "Месяц", render: (v) => escapeHtml(monthLabelFull(v)) },
+          { key: "n", label: "Оптом, лотов", num: true },
+          { key: "month_total", label: "Всего за месяц", num: true },
+        ]);
+      } else emptyState($("#table-drv-bulk"), "Крупных оптовых покупок нет");
+
+      if ((d.price_premiums || []).length) {
+        renderTable($("#table-drv-premiums"), d.price_premiums, [
+          { key: "object", label: "Проект" },
+          { key: "quarter", label: "Квартал", render: (v) => escapeHtml(monthLabelFull(v)) },
+          { key: "premium", label: "Ипотека дороже, %", num: true, render: (v) => `+${nf1.format(v)}` },
+          { key: "mortgage_sqm", label: "м² в ипотеку, ₽", money: true },
+          { key: "cash_sqm", label: "м² без ипотеки, ₽", money: true },
+          { key: "n_mortgage", label: "Ипотечных", num: true },
+          { key: "n_cash", label: "Без ипотеки", num: true },
+        ]);
+      } else emptyState($("#table-drv-premiums"), "Явных расхождений нет");
+
+      const ppCell = (cur, prev) => {
+        if (cur == null) return "—";
+        const base = `${nf0.format(cur)}%`;
+        if (prev == null) return base;
+        const dd = cur - prev;
+        if (Math.abs(dd) < 5) return base;
+        return `${base} <span class="delta ${dd > 0 ? "delta--up" : "delta--down"}">${dd > 0 ? "+" : "−"}${nf0.format(Math.abs(dd))}</span>`;
+      };
+      renderTable($("#table-drv-projects"), d.projects, [
+        { key: "object", label: "Проект", render: (v, r) => `${escapeHtml(v)}${r.is_new ? ' <span class="pill">новый</span>' : ""}` },
+        { key: "developer", label: "Застройщик" },
+        { key: "prev", label: "Было", num: true },
+        { key: "cur", label: "Стало", num: true },
+        { key: "delta", label: "Изменение", num: true, render: (v) => `<span class="delta ${v > 0 ? "delta--up" : v < 0 ? "delta--down" : "delta--flat"}">${v > 0 ? "+" : v < 0 ? "−" : ""}${nf0.format(Math.abs(v))}</span>` },
+        { key: "bulk", label: "Из них опт", num: true },
+        { key: "sqm_pct", label: "Цена м²", num: true, render: pctCell },
+        { key: "mortgage_share", label: "Ипотека", num: true, render: (v, r) => ppCell(v, r.mortgage_share_prev) },
+        { key: "long_share", label: "На 30 лет", num: true, render: (v, r) => ppCell(v, r.long_share_prev) },
+        { key: "top_bank", label: "Главный банк", render: (v, r) => (v ? `${escapeHtml(v)} · ${ppCell(r.top_bank_share, r.top_bank_share_prev)}` : "—") },
+      ]);
+    }, ids.map((id) => $("#" + id)));
+  }
+
   async function loadActiveTab({ refreshDims = true } = {}) {
     abortAll();
     closeMs({ apply: false });
@@ -1485,6 +1635,7 @@
 
     const loaders = {
       tab_deals: loadDealsTab,
+      tab_drivers: loadDriversTab,
       tab_pace: loadPaceTab,
       tab_price: loadPriceTab,
       tab_mortgage: loadMortgageTab,

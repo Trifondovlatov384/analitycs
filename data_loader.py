@@ -41,6 +41,7 @@ BNMAP_USE_COLS = (
     "Количество комнат",
     "Локация",
     "Участие объекта в оптовой сделке",
+    "Тип покупателя",
     "Залогодержатель/Банк",
     "Кол-во месяцев обременения",
     "Старт продаж",
@@ -670,6 +671,8 @@ def load_bnmap_deals(path: str, *, force_crimea_agglomeration: bool) -> pl.DataF
 
     extra = [
         _txt("ID лота").alias("lot_id"),
+        _txt("Тип сделки").alias("contract_type"),
+        _txt("Тип покупателя").alias("buyer_type"),
         _txt("Залогодержатель/Банк").alias("bank"),
         _num("Кол-во месяцев обременения").alias("mortgage_months"),
         _txt("Класс").alias("class"),
