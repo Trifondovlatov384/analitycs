@@ -985,12 +985,12 @@
       val.classList.remove("skeleton");
       val.innerHTML = valueHtml;
       const delta = deltaHtml(d[`${key}_delta`], deltaOpts);
-      const vs = d.compare_to ? `к тому же периоду прошлого года (по ${shortDate(d.compare_to)})` : "к прошлому году";
+      const vs = d.compare_to ? `к прошлому году, с января по ${shortDate(d.compare_to).replace(/ \d{4}$/, "")}` : "к прошлому году";
       $(".kpi-foot", card).innerHTML = d.has_prev && delta ? `${delta}<span title="${escapeHtml(d.compare_note || "")}">${vs} · было ${escapeHtml(prevText)}</span>` : "";
     };
     const noteEl = $("#kpi-note");
     if (noteEl) {
-      noteEl.textContent = d.compare_note ? `Сравнение с прошлым годом: ${d.compare_note}` : "";
+      noteEl.textContent = d.compare_note ? `Рост к прошлому году считается ${d.compare_note}` : "";
       noteEl.hidden = !d.compare_note;
     }
     const money = (v) => {

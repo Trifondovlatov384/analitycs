@@ -108,7 +108,7 @@ def dropped_note(dropped: list[dict]) -> str | None:
         nxt_y = c.year + (1 if c.month == 12 else 0)
         bits.append(
             f"{d['region'] + ': ' if len(dropped) > 1 else ''}сравнение по {c.day} {_gen(c.month)} {c.year} — "
-            f"{_MONTHS_GEN[nxt_m - 1]} {nxt_y} ещё неполный ({d['deals']} {_deals_word(d['deals'])} не учтено)"
+            f"{_MONTHS_GEN[nxt_m - 1]} {nxt_y} ещё неполный (не учтено: {d['deals']} {_deals_word(d['deals'])})"
         )
     return "; ".join(bits) + ". Сделки регистрируются с задержкой, поэтому последний месяц выгрузки сравнивать рано."
 
