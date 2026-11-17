@@ -33,6 +33,8 @@ BNMAP_USE_COLS = (
     "Дата договора",
     "Тип ипотеки",
     "Тип сделки",
+    "Тип договора",  # newer exports call «Тип сделки» this way
+    "Расторжение договора",
     "Цена за кв. метр",
     "Расчетный бюджет объекта",
     "Площадь согласно ПД",
@@ -178,7 +180,14 @@ def find_regional_exports() -> dict[str, list[str]]:
         key = REGION_KEYS.get(region_raw, re.sub(r"[^a-zа-я0-9]+", "_", region_raw))
         stamp = (int(m.group(4)), int(m.group(3)), int(m.group(2)))
         found.setdefault(key, []).append((stamp, str(path)))
-    return {k: [p for _, p in sorted(v, reverse=True)] for k, v in found.items()}
+    # A newer export replaces older ones: bnMAP corrects history (re-dates deals, re-numbers
+    # lots), so merging an old export would bring back stale rows. Parts of the same
+    # export (same date in the name) are kept together.
+    out: dict[str, list[str]] = {}
+    for k, v in found.items():
+        newest = max(stamp for stamp, _ in v)
+        out[k] = sorted(p for stamp, p in v if stamp == newest)
+    return out
 
 
 def _collect_source_paths() -> list[str]:
@@ -654,6 +663,11 @@ def load_bnmap_deals(path: str, *, force_crimea_agglomeration: bool) -> pl.DataF
         ignore_errors=True,
         infer_schema_length=0,
     )
+    if "Тип договора" in df.columns and "Тип сделки" not in df.columns:
+        df = df.rename({"Тип договора": "Тип сделки"})
+    if "Расторжение договора" in df.columns:
+        # Cancelled contracts are not sales.
+        df = df.filter(~pl.col("Расторжение договора").str.to_lowercase().str.starts_with("да").fill_null(False))
 
     def _num(col: str | None) -> pl.Expr:
         if not col or col not in df.columns:
