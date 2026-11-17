@@ -15,7 +15,7 @@ KUBAN_SOURCES = ("kuban", "analitic", "kk2026", "august2026", "july2026", "june2
 REGION_LABELS = {"crimea": "Крым", "kuban": "Краснодарский край", "adygea": "Адыгея"}
 _MONTHS_GEN = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
 
-# A month is «incomplete» when it has less than this share of the average of the 3 months before it.
+# A month is «incomplete» when it has less than this share of the median of the 3 months before it.
 COMPLETE_SHARE = 0.7
 
 _cache: dict[int, dict[str, date]] = {}
@@ -58,7 +58,8 @@ def complete_until(df: pl.DataFrame) -> dict[str, date]:
         for _ in range(2):
             if idx < 3:
                 break
-            base = sum(r[2] for r in rows[idx - 3 : idx]) / 3
+            # Median of the 3 months before: robust to the December spike.
+            base = sorted(r[2] for r in rows[idx - 3 : idx])[1]
             if base and rows[idx][2] < COMPLETE_SHARE * base:
                 idx -= 1
             else:
@@ -107,9 +108,16 @@ def dropped_note(dropped: list[dict]) -> str | None:
         nxt_y = c.year + (1 if c.month == 12 else 0)
         bits.append(
             f"{d['region'] + ': ' if len(dropped) > 1 else ''}сравнение по {c.day} {_gen(c.month)} {c.year} — "
-            f"{_MONTHS_GEN[nxt_m - 1]} {nxt_y} ещё неполный ({d['deals']} сделок не учтены)"
+            f"{_MONTHS_GEN[nxt_m - 1]} {nxt_y} ещё неполный ({d['deals']} {_deals_word(d['deals'])} не учтено)"
         )
     return "; ".join(bits) + ". Сделки регистрируются с задержкой, поэтому последний месяц выгрузки сравнивать рано."
+
+
+def _deals_word(n: int) -> str:
+    n = abs(n) % 100
+    if 11 <= n <= 14:
+        return "сделок"
+    return {1: "сделка", 2: "сделки", 3: "сделки", 4: "сделки"}.get(n % 10, "сделок")
 
 
 def _gen(m: int) -> str:
