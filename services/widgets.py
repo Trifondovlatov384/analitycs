@@ -90,9 +90,16 @@ def _delta_pct(cur: float | None, prev: float | None) -> float | None:
 
 
 def dashboard_kpi(df: pl.DataFrame, a: dict[str, Any]) -> dict:
+    from services.completeness import dropped_note, trim_incomplete
+
     current = filtered_deals(df, a, use_mortgage=True)
     k = _kpi_numbers(current)
-    prev_frame = _previous_period(df, a, current)
+    # Year-on-year is compared like for like: the not-yet-registered tail of the export
+    # is left out of both years (values on the cards still show everything we have).
+    explicit = a.get("date_from") is not None or a.get("date_to") is not None
+    cmp_frame, dropped = (current, []) if explicit else trim_incomplete(df, current)
+    kc = _kpi_numbers(cmp_frame)
+    prev_frame = _previous_period(df, a, cmp_frame)
     p = _kpi_numbers(prev_frame) if prev_frame is not None and not prev_frame.is_empty() else None
 
     out: dict[str, Any] = {
@@ -103,6 +110,7 @@ def dashboard_kpi(df: pl.DataFrame, a: dict[str, Any]) -> dict:
     }
     for key, val in k.items():
         out[f"{key}_raw"] = round(val, 1) if val is not None else None
+        val = kc.get(key)
         prev_val = p.get(key) if p else None
         out[f"{key}_prev"] = round(prev_val, 1) if prev_val is not None else None
         if key == "mortgage_share":
@@ -110,6 +118,10 @@ def dashboard_kpi(df: pl.DataFrame, a: dict[str, Any]) -> dict:
         else:
             out[f"{key}_delta"] = _delta_pct(val, prev_val)
     out["has_prev"] = p is not None
+    out["compare_note"] = dropped_note(dropped)
+    if dropped and p is not None:
+        last = max(d["cutoff"] for d in dropped)
+        out["compare_to"] = last
     return out
 
 

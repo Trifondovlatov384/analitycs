@@ -346,6 +346,7 @@ def _narrative(
     scope: str,
     period: dict,
     prev_period: dict,
+    note: str | None = None,
 ) -> list[dict]:
     out: list[dict] = []
     d = s1["deals"] - s0["deals"]
@@ -360,7 +361,8 @@ def _narrative(
             f"{scope}. Период {_day(period['from'])} — {_day(period['to'])}, сравнение с "
             f"{_day(prev_period['from'])} — {_day(prev_period['to'])}. "
             f"Сделок {_fmt_n(s1['deals'])} против {_fmt_n(s0['deals'])}"
-            + (f" ({_signed_pct(pct)})." if pct is not None else "."),
+            + (f" ({_signed_pct(pct)})." if pct is not None else ".")
+            + (f" {note[:1].upper() + note[1:]}" if note else ""),
             "lead",
         )
     )
@@ -570,7 +572,12 @@ def _narrative(
 
 def sales_drivers(df: pl.DataFrame, a: dict[str, Any]) -> dict:
     args = {**a, "mortgage_mode": "all"}
+    from services.completeness import dropped_note, trim_incomplete
+
     cur = filtered_deals(df, args, use_mortgage=False)
+    explicit = a.get("date_from") is not None or a.get("date_to") is not None
+    cur, dropped = (cur, []) if explicit else trim_incomplete(df, cur)
+    note = dropped_note(dropped)
     prev = _previous_period(df, args, cur)
     if prev is None:
         return {"message": "Выберите год или период — сравнение идёт с тем же периодом годом раньше"}
@@ -636,8 +643,9 @@ def sales_drivers(df: pl.DataFrame, a: dict[str, Any]) -> dict:
         "summary": s1,
         "summary_prev": s0,
         "narrative": _narrative(
-            s1, s0, projects, devs, bulk, programs, premiums, banks, bank_projects, scope, period, prev_period
+            s1, s0, projects, devs, bulk, programs, premiums, banks, bank_projects, scope, period, prev_period, note
         ),
+        "compare_note": note,
         "contributions": [{"name": p["object"], "value": p["delta"]} for p in movers],
         "developers": devs[:8] + [x for x in devs[-5:] if x not in devs[:8]],
         "projects": projects[:300],

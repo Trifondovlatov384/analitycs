@@ -124,8 +124,11 @@ def sales_pace(df: pl.DataFrame, a: dict[str, Any]) -> dict:
     )
     base = base.join(fresh, on=["region", "source"], how="inner")
     first_idx = {r["region"]: r["f"] for r in base.group_by("region").agg(pl.col("midx").min().alias("f")).iter_rows(named=True)}
+    from services.completeness import complete_until
+
+    cut = {} if explicit else complete_until(df)
     anchors = {
-        r["region"]: (_anchor_month(r["last"], explicit), r["last"])
+        r["region"]: (_anchor_month(min(r["last"], cut.get(r["region"], r["last"])), explicit), r["last"])
         for r in base.group_by("region").agg(pl.col("sold_date").max().alias("last")).iter_rows(named=True)
     }
     anchor_df = pl.DataFrame(
