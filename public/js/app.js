@@ -2034,14 +2034,16 @@
         return;
       }
       const byTeam = {};
-      let deals = 0, minD = null, maxD = null;
+      let deals = 0, minD = null, maxD = null, future = 0;
+      const today = new Date().toISOString().slice(0, 10);
       for (const r of rows) {
         const t = (byTeam[r.team] ||= { b: 0, d: 0 });
         t.b += 1;
         if (r._deal) {
           t.d += 1;
           deals += 1;
-          if (r.deal_date) {
+          if (r.deal_date > today) future += 1;
+          else if (r.deal_date) {
             if (!minD || r.deal_date < minD) minD = r.deal_date;
             if (!maxD || r.deal_date > maxD) maxD = r.deal_date;
           }
@@ -2052,6 +2054,7 @@
         <table class="data-table"><thead><tr><th>Команда</th><th class="num">Броней</th><th class="num">Сделок</th></tr></thead><tbody>
         ${Object.entries(byTeam).map(([t, v]) => `<tr><td>${escapeHtml(t)}</td><td class="num">${nf0.format(v.b)}</td><td class="num">${nf0.format(v.d)}</td></tr>`).join("")}
         </tbody></table>
+        ${future ? `<p class="note">${nf0.format(future)} ${future === 1 ? "сделка" : "сделок"} с датой в будущем (плановая дата) — на графиках появятся, когда наступит их месяц.</p>` : ""}
         ${missing.length ? `<p class="note">Пропущено: ${escapeHtml(missing.join("; "))}</p>` : ""}
         <p class="note">На сайт уйдут только комплекс, лот, сумма, даты, стадия, вид оплаты и вид брони — без ФИО, комиссий и ссылок. Текущие данные в базе заменятся этой выгрузкой.</p>`;
       state.estadelPending = { rows: rows.map(({ _deal, ...r }) => r), source: file.name };
