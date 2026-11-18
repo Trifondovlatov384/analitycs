@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#f5f4f0">
   <title>Сделки · аналитика</title>
   <link rel="preload" href="/vendor/inter-cyrillic-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="/css/app.css?v=11">
+  <link rel="stylesheet" href="/css/app.css?v=12">
 </head>
 <body>
   <div class="app" id="app">
@@ -20,6 +20,7 @@
         <nav class="tabs" id="tabs" role="tablist" aria-label="Разделы"></nav>
         <div class="header-meta">
           <span class="data-badge" id="data-badge" hidden></span>
+          <button type="button" class="btn btn--ghost btn--sm" id="estadel-open" hidden>Продажи Estadel</button>
           <a class="app-logout" href="/logout">Выйти</a>
         </div>
       </div>
@@ -55,6 +56,11 @@
               </div>
             </header>
             <div class="chart-wrap chart-wrap--tall skeleton" id="chart-monthly-counts"></div>
+          </article>
+
+          <article class="widget widget--est" id="estadel-share" hidden>
+            <header class="widget-head"><div><h2 class="widget-title" id="estadel-share-title">Estadel и рынок</h2><p class="widget-sub">Наш объём под теми же фильтрами, что и рынок</p></div></header>
+            <div id="estadel-share-body"></div>
           </article>
 
           <div class="widgets-2">
@@ -315,9 +321,23 @@
     </main>
   </div>
 
+  <dialog class="est-dialog" id="estadel-dialog" aria-labelledby="estadel-dialog-title">
+    <header class="widget-head">
+      <div><h2 class="widget-title" id="estadel-dialog-title">Продажи Estadel</h2><p class="widget-sub">Раз в месяц: Google Таблица «Estadel. План продаж» → Файл → Скачать → Microsoft Excel (.xlsx)</p></div>
+      <button type="button" class="btn btn--link" id="estadel-close" aria-label="Закрыть">✕</button>
+    </header>
+    <div class="est-body">
+      <p id="estadel-status" class="note"></p>
+      <div id="estadel-unmatched"></div>
+      <label class="est-file"><input type="file" id="estadel-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><span>Выбрать файл .xlsx</span></label>
+      <div id="estadel-preview"></div>
+      <button type="button" class="btn btn--primary" id="estadel-send" hidden>Загрузить в базу</button>
+    </div>
+  </dialog>
+
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="/vendor/chart.umd.min.js" defer></script>
-  <script src="/js/app.js?v=11" defer></script>
+  <script src="/js/app.js?v=12" defer></script>
 </body>
 </html>

@@ -49,6 +49,7 @@
     access: "",
     pace_window: 3,
     gran: "month",
+    estadel: "",
   };
 
   const state = {
@@ -122,7 +123,16 @@
       sea: cssVar("--sea") || "#0e7490",
       sand: cssVar("--sand") || "#c98a2b",
       surface: cssVar("--surface") || "#fff",
+      est: estColor(),
     };
+  }
+
+  function estColor() {
+    return cssVar("--est") || "#b4236b";
+  }
+
+  function estLabel(kind) {
+    return kind === "bookings" ? "Брони Estadel" : "Сделки Estadel";
   }
 
   function toast(msg) {
@@ -139,7 +149,7 @@
   const SCALAR_KEYS = [
     "source", "agglomeration", "year", "date_from", "date_to", "mortgage_mode", "budget_min", "budget_max",
     "object", "line_shape", "search", "type_lot_single", "top_n", "target_budget", "delta_budget",
-    "pace_window", "gran",
+    "pace_window", "gran", "estadel",
   ];
   const LIST_KEYS = ["months", "city", "developer", "project", "type_lot", "district", "selected", "projects", "region", "work_type", "data_quality"];
 
@@ -177,6 +187,7 @@
     putScalar("budget_max");
     putScalar("object");
     putScalar("line_shape", ["linear"]);
+    putScalar("estadel");
     if (state.tab === "tab_egrz") putScalar("search");
     if (state.tab === "tab_euler") {
       putScalar("type_lot_single");
@@ -204,7 +215,7 @@
       "source", "agglomeration", "year", "date_from", "date_to", "months", "city", "developer", "project", "type_lot",
       "mortgage_mode", "budget_min", "budget_max", "object", "month", "district", "selected", "top_n", "line_shape",
       "data_quality", "target_budget", "delta_budget", "type_lot_single", "projects", "search", "region", "work_type", "access",
-      "pace_window", "gran",
+      "pace_window", "gran", "estadel",
     ];
     for (const k of keys) {
       const v = f[k];
@@ -380,7 +391,7 @@
     });
   }
 
-  function barChart(key, container, labels, values, { horizontal = true, color, monthAxis = false, tooltipSuffix = "" } = {}) {
+  function barChart(key, container, labels, values, { horizontal = true, color, monthAxis = false, tooltipSuffix = "", label = "Рынок", extra = [] } = {}) {
     destroyChart(key);
     if (!window.Chart) return emptyState(container, "Графики не загрузились");
     if (!labels.length) return emptyState(container, "Нет данных", "Попробуйте ослабить фильтры");
@@ -391,18 +402,19 @@
       type: "bar",
       data: {
         labels,
-        datasets: [{ data: values, backgroundColor: color || c.sea, borderRadius: 5, borderSkipped: false, maxBarThickness: horizontal ? 16 : 42 }],
+        datasets: [{ label, data: values, backgroundColor: color || c.sea, borderRadius: 5, borderSkipped: false, maxBarThickness: horizontal ? 16 : 42 }, ...extra],
       },
       options: {
         indexAxis: horizontal ? "y" : "x",
         responsive: true,
         maintainAspectRatio: false,
+        interaction: extra.length ? { mode: "index", intersect: false } : undefined,
         plugins: {
-          legend: { display: false },
+          legend: { display: extra.length > 0, position: "top", align: "end" },
           tooltip: {
             callbacks: {
               title: (items) => (monthAxis ? monthLabel(labels[items[0].dataIndex]) : labels[items[0].dataIndex]),
-              label: (ctx) => ` ${nf0.format(horizontal ? ctx.parsed.x : ctx.parsed.y)}${tooltipSuffix}`,
+              label: (ctx) => ` ${extra.length ? ctx.dataset.label + ": " : ""}${nf0.format(horizontal ? ctx.parsed.x : ctx.parsed.y)}${tooltipSuffix}`,
             },
           },
         },
@@ -414,6 +426,9 @@
           : {
               x: { grid: { display: false }, ticks: catTicks },
               y: { beginAtZero: true, grid: { color: c.line }, border: { display: false } },
+              ...(extra.some((x) => x.yAxisID === "y1")
+                ? { y1: { position: "right", beginAtZero: true, grid: { display: false }, border: { display: false }, ticks: { maxTicksLimit: 6, color: estColor() } } }
+                : {}),
             },
       },
     });
@@ -603,6 +618,8 @@
     syncPaletteUi();
     clearSkeleton(container);
     const { objects = [], display = [], months = [], month_keys = [], z = [] } = data;
+    const ours = data.ours && Array.isArray(data.ours.z) ? data.ours : null;
+    const oursWord = ours?.kind === "bookings" ? "броней Estadel" : "сделок Estadel";
     if (!months.length || !display.length) return emptyState(container, "Нет данных", "Попробуйте ослабить фильтры");
     const nonzero = z.flat().filter((v) => v > 0).sort((a, b) => a - b);
     const q = (p) => nonzero[Math.min(nonzero.length - 1, Math.max(0, Math.floor((nonzero.length - 1) * p)))] ?? 1;
@@ -618,19 +635,26 @@
       .map((name, i) => {
         const obj = objects[i] || String(name).replace(/\s\(\d+\)$/, "");
         const total = (z[i] || []).reduce((s, v) => s + (Number(v) || 0), 0);
+        const oTotal = ours ? (ours.z[i] || []).reduce((s, v) => s + (Number(v) || 0), 0) : 0;
         const cells = (z[i] || [])
           .map((v, j) => {
             const vv = Number(v) || 0;
-            const attrs = `data-object="${escapeHtml(obj)}" data-month="${escapeHtml(month_keys[j] || months[j])}" title="${escapeHtml(obj)} · ${escapeHtml(months[j])}: ${vv}"`;
-            if (vv <= 0) return `<td class="hm-zero" ${attrs}></td>`;
+            const o = ours ? Number(ours.z[i]?.[j]) || 0 : 0;
+            const tip = `${obj} · ${months[j]}: ${vv} на рынке${o ? `, ${o} ${oursWord}${vv ? ` (${Math.round((o / vv) * 100)}%)` : ""}` : ""}`;
+            const attrs = `data-object="${escapeHtml(obj)}" data-month="${escapeHtml(month_keys[j] || months[j])}" title="${escapeHtml(tip)}"`;
+            const badge = o ? `<sup class="hm-ours">${o}</sup>` : "";
+            if (vv <= 0) return `<td class="hm-zero ${o ? "has-ours" : ""}" ${attrs}>${badge}</td>`;
             const { bg, fg } = heatColor((vv - zmin) / span);
-            return `<td style="background:${bg};color:${fg}" ${attrs}>${vv}</td>`;
+            return `<td style="background:${bg};color:${fg}" ${attrs}>${vv}${badge}</td>`;
           })
           .join("");
-        return `<tr><th class="row-label" title="${escapeHtml(obj)}">${escapeHtml(obj)}<span class="tot">${nf0.format(total)}</span></th>${cells}</tr>`;
+        return `<tr><th class="row-label" title="${escapeHtml(obj)}">${escapeHtml(obj)}<span class="tot">${nf0.format(total)}${oTotal ? ` · <b class="hm-ours-tot" title="${escapeHtml(`${oTotal} ${oursWord}`)}">${nf0.format(oTotal)}</b>` : ""}</span></th>${cells}</tr>`;
       })
       .join("");
-    container.innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+    const legend = ours
+      ? `<p class="hm-legend"><sup class="hm-ours">N</sup> — ${escapeHtml(oursWord)} в этом комплексе за месяц. Цвет и число в ячейке — весь рынок.</p>`
+      : "";
+    container.innerHTML = `${legend}<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
   }
 
   /* ───────────────────────── Filters UI ───────────────────────── */
@@ -800,8 +824,24 @@
         f.mortgage_mode
       )
     );
+    if (ESTADEL_TABS.has(state.tab) && state.estadel?.rows) {
+      blocks.push(
+        filterSelect(
+          "estadel",
+          "Наши данные",
+          [
+            { label: "Не показывать", value: "" },
+            { label: "Сделки Estadel", value: "deals" },
+            { label: "Брони Estadel", value: "bookings" },
+          ],
+          f.estadel
+        )
+      );
+    }
     return blocks;
   }
+
+  const ESTADEL_TABS = new Set(["tab_deals", "tab_complexes", "tab_heatmap"]);
 
   function monthLabelFull(key) {
     const q = /^(\d{4})-Q(\d)$/.exec(String(key || ""));
@@ -1030,8 +1070,11 @@
                 { label: "Всего", data: d.total, borderColor: c.ink, backgroundColor: (ctx) => gradient(ctx, toHex(c.ink)), fill: true, borderWidth: 2.5 },
                 { label: "Ипотека", data: d.mortgage, borderColor: c.sea, backgroundColor: "transparent" },
                 { label: "Без ипотеки", data: d.non_mortgage, borderColor: c.sand, backgroundColor: "transparent", borderDash: [5, 4] },
+                ...(d.estadel?.values
+                  ? [{ label: `${estLabel(d.estadel.kind)} (правая ось)`, data: d.estadel.values, borderColor: c.est, backgroundColor: c.est, yAxisID: "y1", borderWidth: 2.5, pointRadius: 2.5 }]
+                  : []),
               ],
-              { tension }
+              { tension, y1: Boolean(d.estadel?.values) }
             )
           ),
         $("#chart-monthly-counts")
@@ -1090,6 +1133,7 @@
           }),
         [$("#chart-top-total"), $("#chart-top-mortgage")]
       ),
+      loadEstadelShare(),
     ];
     await Promise.allSettled(jobs);
   }
@@ -1114,7 +1158,10 @@
           api("/api/complexes/monthly", { signal }).then((d) => {
             $("#complex-monthly-title").textContent = d.name ? `Продажи по месяцам: ${d.name}` : "Помесячные продажи комплекса";
             if (!d.name) return emptyState($("#chart-complex-monthly"), "Комплекс не выбран", "Выберите его в фильтре «Комплекс»");
-            barChart("complex-monthly", $("#chart-complex-monthly"), d.labels, d.values, { horizontal: false, color: c.sea, monthAxis: true, tooltipSuffix: " сделок" });
+            const extra = d.estadel?.values
+              ? [{ type: "line", label: `${estLabel(d.estadel.kind)} (правая ось)`, data: d.estadel.values, borderColor: c.est, backgroundColor: c.est, yAxisID: "y1", borderWidth: 2.5, pointRadius: 3, tension: 0 }]
+              : [];
+            barChart("complex-monthly", $("#chart-complex-monthly"), d.labels, d.values, { horizontal: false, color: c.sea, monthAxis: true, label: "Рынок", extra });
           }),
         $("#chart-complex-monthly")
       ),
@@ -1792,14 +1839,277 @@
     });
   }
 
+  /* ───────────────────────── Estadel: our sales vs market ───────────────────────── */
+
+  async function loadEstadelStatus() {
+    try {
+      const res = await fetch("/api/estadel/status", { credentials: "same-origin" });
+      state.estadel = res.ok ? await res.json() : null;
+    } catch {
+      state.estadel = null;
+    }
+    const btn = $("#estadel-open");
+    if (btn) btn.hidden = !state.estadel?.configured;
+    if (!state.estadel?.rows && state.filters.estadel) state.filters.estadel = "";
+  }
+
+  async function loadEstadelShare() {
+    const box = $("#estadel-share");
+    if (!box) return;
+    const kind = state.filters.estadel;
+    box.hidden = !kind;
+    if (!kind) return;
+    const body = $("#estadel-share-body");
+    setLoading(body);
+    return track(async (signal) => {
+      const d = await api("/api/estadel/share", { signal });
+      clearSkeleton(body);
+      $("#estadel-share-title").textContent = `${estLabel(d.kind)} и рынок`;
+      if (d.message) return emptyState(body, d.message);
+      const noun = d.kind === "bookings" ? "броней" : "сделок";
+      const kpi = (label, value, foot = "") =>
+        `<article class="kpi kpi--est"><div class="kpi-label">${escapeHtml(label)}</div><div class="kpi-value">${value}</div><div class="kpi-foot">${foot}</div></article>`;
+      body.innerHTML = `
+        <div class="kpi-grid kpi-grid--4">
+          ${kpi(`Наших ${noun}`, nf0.format(d.ours_total), d.ours_sum ? `на ${compactStr(d.ours_sum)} ₽` : "")}
+          ${kpi("Сделок на рынке", nf0.format(d.market_total), "под теми же фильтрами")}
+          ${kpi("Наша доля рынка", d.share != null ? `${nf1.format(d.share)}<small>%</small>` : "—", "от всех сделок реестра")}
+          ${kpi("Доля в наших ЖК", d.share_in_our_projects != null ? `${nf1.format(d.share_in_our_projects)}<small>%</small>` : "—", `в ${nf0.format(d.our_projects)} комплексах, где мы продаём`)}
+        </div>
+        <div class="chart-wrap" id="chart-estadel-share"></div>
+        <div class="table-wrap" id="table-estadel-share"></div>
+        <p class="note">${
+          d.kind === "bookings"
+            ? "Брони считаются по дате брони, включая слетевшие. Рынок — зарегистрированные сделки, поэтому доля броней — ориентир, а не точная доля."
+            : "Наши сделки — по дате сделки из плана продаж. В реестре договор появляется после регистрации, обычно на 1–2 месяца позже, поэтому последний месяц доля завышена."
+        } В расчёт попадают только комплексы, найденные в реестре.</p>`;
+      const c = palette();
+      barChart("estadel-share", $("#chart-estadel-share"), d.months, d.ours_by_month, {
+        horizontal: false,
+        color: c.est,
+        monthAxis: true,
+        label: `Наших ${noun}`,
+        extra: [{ type: "line", label: "Доля рынка, % (правая ось)", data: d.share_by_month, borderColor: c.ink, backgroundColor: c.ink, yAxisID: "y1", borderWidth: 2, pointRadius: 2, tension: 0 }],
+      });
+      renderTable($("#table-estadel-share"), d.table || [], [
+        { key: "object", label: "Комплекс" },
+        { key: "city", label: "Город" },
+        { key: "market", label: "Рынок", num: true },
+        { key: "ours", label: "Estadel", num: true },
+        { key: "share", label: "Доля, %", num: true, render: (v) => (v == null ? "—" : nf1.format(v)) },
+        { key: "ours_sum", label: "Наш объём, ₽", money: true },
+      ], { id: "estadel-share" });
+    }, body);
+  }
+
+  /* Upload: the xlsx is parsed here in the browser; only non-personal fields leave it. */
+  const EST_SHEETS = {
+    "Брони Крым": "Крым",
+    "Брони Орлы Крым": "Орлы Крым",
+    "Брони Анапа": "Анапа",
+    "Брони Сочи": "Сочи",
+    "Брони Акулы ЖК": "Акулы ЖК",
+    "Брони Эстадель Лайт": "Эстадель Лайт",
+  };
+  const EST_DEAL_STAGES = new Set(["комиссия полностью получена", "сделка состоялась", "пв забран, ждем рассрочку", "пв внесен", "оформление ипотеки"]);
+
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      if (window.XLSX) return resolve();
+      const s = document.createElement("script");
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = () => reject(new Error("Не удалось загрузить модуль чтения Excel"));
+      document.head.appendChild(s);
+    });
+  }
+
+  function estDate(v) {
+    if (v === null || v === undefined || v === "") return null;
+    if (typeof v === "number" && window.XLSX?.SSF) {
+      const p = XLSX.SSF.parse_date_code(v);
+      if (!p || !p.y) return null;
+      return `${p.y}-${String(p.m).padStart(2, "0")}-${String(p.d).padStart(2, "0")}`;
+    }
+    const s = String(v).trim().slice(0, 10);
+    let m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+    m = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(s);
+    if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+    return null;
+  }
+
+  function estNum(v) {
+    if (v === null || v === undefined || v === "") return null;
+    if (typeof v === "number") return Number.isFinite(v) ? v : null;
+    const n = Number(String(v).replace(/[\s ]/g, "").replace(",", "."));
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function parseEstadelWorkbook(wb) {
+    const rows = [];
+    const missing = [];
+    for (const [sheet, team] of Object.entries(EST_SHEETS)) {
+      const ws = wb.Sheets[sheet];
+      if (!ws) {
+        missing.push(sheet);
+        continue;
+      }
+      const grid = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, blankrows: false });
+      if (!grid.length) continue;
+      const h = grid[0].map((x) => String(x ?? "").trim());
+      const col = (name) => {
+        const i = h.findIndex((x) => x.startsWith(name));
+        return i < 0 ? null : i;
+      };
+      const iC = col("Комплекс"), iLot = col("Апарт"), iSum = col("Сумма"), iBd = col("Дата брони"), iSt = col("Стадия сделки");
+      const iDd = col("Дата сделки динамическая"), iPay = col("Вид оплаты"), iSrc = col("Вид брони");
+      if (iC === null || iSt === null || iBd === null) {
+        missing.push(`${sheet}: нет колонок «Комплекс», «Дата брони» или «Стадия сделки»`);
+        continue;
+      }
+      for (const r of grid.slice(1)) {
+        const cx = String(r[iC] ?? "").trim();
+        if (!cx) continue;
+        const stage = String(r[iSt] ?? "").replace(/🗹/g, "").split(/\s+/).filter(Boolean).join(" ");
+        const isDeal = EST_DEAL_STAGES.has(stage.toLowerCase());
+        let dd = iDd !== null ? estDate(r[iDd]) : null;
+        const fm = parseInt(estNum(r[2]), 10);
+        const fy = parseInt(estNum(r[3]), 10);
+        if (isDeal && fm >= 1 && fm <= 12 && fy > 2000) {
+          const factKey = `${fy}-${String(fm).padStart(2, "0")}`;
+          if (!dd || dd.slice(0, 7) !== factKey) dd = `${factKey}-01`; // month of the actual deal wins
+        }
+        const txt = (i) => (i === null || r[i] === null || r[i] === undefined ? null : String(r[i]).trim() || null);
+        rows.push({
+          team,
+          complex: cx,
+          lot: txt(iLot),
+          amount: iSum !== null ? estNum(r[iSum]) : null,
+          booking_date: estDate(r[iBd]),
+          deal_date: isDeal ? dd : null,
+          stage: stage || null,
+          payment: txt(iPay),
+          lead_source: txt(iSrc),
+          _deal: isDeal,
+        });
+      }
+    }
+    return { rows, missing };
+  }
+
+  function openEstadelDialog() {
+    const dlg = $("#estadel-dialog");
+    const st = state.estadel || {};
+    const last = st.last_load;
+    const when = last?.at ? new Date(last.at).toLocaleString("ru-RU", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" }) : null;
+    $("#estadel-status").innerHTML = st.error
+      ? `<div class="error-box">${escapeHtml(st.error)}</div>`
+      : st.rows
+        ? `В базе <b>${nf0.format(st.rows)}</b> броней, из них <b>${nf0.format(st.deals)}</b> сделок${st.deal_range?.[1] ? ` (по ${escapeHtml(st.deal_range[1])})` : ""}. ${when ? `Последняя загрузка: ${escapeHtml(when)}.` : ""} С реестром сопоставлено ${st.matched_share ?? "—"}% строк.`
+        : "Данных пока нет — загрузите первую выгрузку.";
+    const um = (st.unmatched || []).filter((x) => x.deals > 0).slice(0, 15);
+    $("#estadel-unmatched").innerHTML = um.length
+      ? `<details><summary>Не нашлись в реестре (${um.length}${(st.unmatched || []).length > 15 ? "+" : ""})</summary><p class="note">Эти комплексы не попадают в сравнение: их нет в загруженных регионах (например, Севастополь или зарубежные проекты) или название сильно отличается.</p><ul class="est-unmatched">${um.map((x) => `<li>${escapeHtml(x.complex)} <span>${nf0.format(x.deals)} сд.</span></li>`).join("")}</ul></details>`
+      : "";
+    $("#estadel-preview").innerHTML = "";
+    $("#estadel-send").hidden = true;
+    $("#estadel-file").value = "";
+    state.estadelPending = null;
+    dlg.showModal();
+  }
+
+  async function onEstadelFile(file) {
+    const prev = $("#estadel-preview");
+    $("#estadel-send").hidden = true;
+    state.estadelPending = null;
+    if (!file) return;
+    prev.innerHTML = `<p class="note">Читаю файл…</p>`;
+    try {
+      await loadScript("/vendor/xlsx.full.min.js");
+      const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
+      const { rows, missing } = parseEstadelWorkbook(wb);
+      if (!rows.length) {
+        prev.innerHTML = `<div class="error-box">В файле не нашлось листов с бронями (${escapeHtml(Object.keys(EST_SHEETS).join(", "))}). Это точно «Estadel. План продаж» в формате .xlsx?</div>`;
+        return;
+      }
+      const byTeam = {};
+      let deals = 0, minD = null, maxD = null;
+      for (const r of rows) {
+        const t = (byTeam[r.team] ||= { b: 0, d: 0 });
+        t.b += 1;
+        if (r._deal) {
+          t.d += 1;
+          deals += 1;
+          if (r.deal_date) {
+            if (!minD || r.deal_date < minD) minD = r.deal_date;
+            if (!maxD || r.deal_date > maxD) maxD = r.deal_date;
+          }
+        }
+      }
+      prev.innerHTML = `
+        <p>Найдено <b>${nf0.format(rows.length)}</b> броней, из них <b>${nf0.format(deals)}</b> сделок${minD ? ` (${escapeHtml(minD)} — ${escapeHtml(maxD)})` : ""}.</p>
+        <table class="data-table"><thead><tr><th>Команда</th><th class="num">Броней</th><th class="num">Сделок</th></tr></thead><tbody>
+        ${Object.entries(byTeam).map(([t, v]) => `<tr><td>${escapeHtml(t)}</td><td class="num">${nf0.format(v.b)}</td><td class="num">${nf0.format(v.d)}</td></tr>`).join("")}
+        </tbody></table>
+        ${missing.length ? `<p class="note">Пропущено: ${escapeHtml(missing.join("; "))}</p>` : ""}
+        <p class="note">На сайт уйдут только комплекс, лот, сумма, даты, стадия, вид оплаты и вид брони — без ФИО, комиссий и ссылок. Текущие данные в базе заменятся этой выгрузкой.</p>`;
+      state.estadelPending = { rows: rows.map(({ _deal, ...r }) => r), source: file.name };
+      $("#estadel-send").hidden = false;
+    } catch (err) {
+      console.error(err);
+      prev.innerHTML = `<div class="error-box">Не удалось прочитать файл: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  async function sendEstadel() {
+    const p = state.estadelPending;
+    if (!p) return;
+    const btn = $("#estadel-send");
+    btn.disabled = true;
+    btn.textContent = "Загружаю…";
+    try {
+      const res = await fetch("/api/estadel/upload", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-Requested-With": "estadel-upload" },
+        body: JSON.stringify(p),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || `Ошибка ${res.status}`);
+      const fresh = (d.new_complexes || []).filter((x) => !x.project).map((x) => x.complex);
+      $("#estadel-preview").innerHTML = `<p class="ok-box">Готово: загружено ${nf0.format(d.rows)} броней, ${nf0.format(d.deals)} сделок.${
+        (d.new_complexes || []).length ? ` Новых комплексов: ${d.new_complexes.length}${fresh.length ? `, не нашлись в реестре: ${escapeHtml(fresh.join(", "))}` : ""}.` : ""
+      }</p>`;
+      btn.hidden = true;
+      state.estadelPending = null;
+      await loadEstadelStatus();
+      if (!state.filters.estadel) state.filters.estadel = "deals";
+      loadActiveTab({ refreshDims: false });
+    } catch (err) {
+      $("#estadel-preview").insertAdjacentHTML("beforeend", `<div class="error-box">${escapeHtml(err.message)}</div>`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Загрузить в базу";
+    }
+  }
+
+  function bindEstadel() {
+    $("#estadel-open")?.addEventListener("click", openEstadelDialog);
+    $("#estadel-file")?.addEventListener("change", (e) => onEstadelFile(e.target.files?.[0]));
+    $("#estadel-send")?.addEventListener("click", sendEstadel);
+    $("#estadel-close")?.addEventListener("click", () => $("#estadel-dialog").close());
+  }
+
   async function boot() {
     readUrl();
     if (window.matchMedia("(max-width: 640px)").matches) $("#filters-card").classList.add("is-collapsed");
     renderTabs();
     showPanel();
     bindEvents();
+    bindEstadel();
     try {
-      await loadMeta();
+      await Promise.all([loadMeta(), loadEstadelStatus()]);
       await loadActiveTab({ refreshDims: true });
     } catch (err) {
       if (String(err.message) !== "unauthorized") {

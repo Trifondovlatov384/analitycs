@@ -13,6 +13,7 @@ from aggregations import (
     monthly_deal_counts,
     yearly_top_complexes,
 )
+from services import estadel
 from services.filters import filtered_deals, filter_by_source, multi, parse_date, parse_year, slice_by_period
 
 
@@ -171,12 +172,25 @@ def dashboard_monthly_counts(df: pl.DataFrame, a: dict[str, Any]) -> dict:
     m = monthly_deal_counts(base)
     if m.is_empty():
         return {"labels": [], "total": [], "mortgage": [], "non_mortgage": []}
+    labels = m["sold_month"].to_list()
     return {
-        "labels": m["sold_month"].to_list(),
+        "labels": labels,
         "total": m["deals_total"].to_list(),
         "mortgage": m["deals_mortgage"].to_list(),
         "non_mortgage": m["deals_non_mortgage"].to_list(),
+        "estadel": _estadel_safe(lambda: estadel.monthly(df, {**a, "mortgage_mode": "all"}, labels)),
     }
+
+
+def _estadel_safe(fn):
+    """Our-sales overlay must never break the market chart (DB down, not configured)."""
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).exception("estadel overlay failed")
+        return {"error": "Нет связи с базой продаж Estadel"}
 
 
 def dashboard_monthly_avg(df: pl.DataFrame, a: dict[str, Any]) -> dict:
@@ -237,10 +251,12 @@ def complexes_monthly(df: pl.DataFrame, a: dict[str, Any]) -> dict:
     m = complex_monthly_counts(base, complex_name=name)
     if m.is_empty():
         return {"labels": [], "values": [], "name": name}
+    labels = m["sold_month"].to_list()
     return {
-        "labels": m["sold_month"].to_list(),
+        "labels": labels,
         "values": [int(x) for x in m["deals"].to_list()],
         "name": name,
+        "estadel": _estadel_safe(lambda: estadel.monthly(df, a, labels)),
     }
 
 
@@ -373,7 +389,23 @@ def _heatmap_filtered(df: pl.DataFrame, a: dict[str, Any]) -> pl.DataFrame:
 
 def heatmap_data(df: pl.DataFrame, a: dict[str, Any]) -> dict:
     filtered = _heatmap_filtered(df, a)
-    return _heatmap_from_deals(filtered, a.get("top_n") or 40)
+    out = _heatmap_from_deals(filtered, a.get("top_n") or 40)
+    if estadel.kind_of(a) and out.get("objects"):
+
+        def ours():
+            cells = estadel.by_project_month(df, {**a, "developer": [], "project": []})
+            return {
+                "kind": a["estadel"],
+                "z": [[cells.get((o, mk), 0) for mk in out["month_keys"]] for o in out["objects"]],
+            }
+
+        out["ours"] = _estadel_safe(ours)
+    return out
+
+
+def estadel_share(df: pl.DataFrame, a: dict[str, Any]) -> dict:
+    base = filtered_deals(df, a, use_mortgage=True)
+    return estadel.share_report(base, df, a)
 
 
 def heatmap_cell_details(df: pl.DataFrame, a: dict[str, Any]) -> dict:

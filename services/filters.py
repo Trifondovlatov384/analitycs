@@ -147,6 +147,7 @@ def args_from_request(req: Request) -> dict[str, Any]:
         "access": (g("access") or "").strip() or None,
         "pace_window": _int(g("pace_window"), 3, lo=1, hi=12),
         "gran": "quarter" if g("gran") == "quarter" else "month",
+        "estadel": g("estadel") if g("estadel") in ("deals", "bookings") else None,
     }
 
 

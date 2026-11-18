@@ -33,6 +33,8 @@
   --sea-ink: #0b5c72;
   --sand: #c98a2b;         /* secondary series */
   --sand-soft: #f7ecda;
+  --est: #b4236b;          /* Estadel's own sales */
+  --est-soft: #f8e6ef;
   --up: #15803d;
   --up-soft: #e6f4ea;
   --down: #b42318;
@@ -62,6 +64,8 @@
     --sea-ink: #7dd3e8;
     --sand: #e0a84f;
     --sand-soft: #3a2e1b;
+    --est: #f06aa8;
+    --est-soft: #3a1828;
     --up: #4ade80;
     --up-soft: #133122;
     --down: #f87171;
@@ -699,3 +703,37 @@ a { color: var(--sea); text-decoration: none; }
   .chart-wrap--xl { height: 360px; }
   .widget { padding: 14px; }
 }
+
+/* ── Estadel overlay ── */
+.btn--sm { padding: 6px 10px; font-size: 13px; }
+.widget--est { border-top: 3px solid var(--est); }
+.widget--est .chart-wrap { margin-top: 14px; }
+.widget--est .table-wrap { margin-top: 14px; max-height: 420px; }
+.kpi-grid--4 { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.kpi--est .kpi-value { color: var(--est); }
+.kpi--est { box-shadow: none; background: var(--surface-2); }
+.heatmap td { position: relative; }
+.hm-ours {
+  position: absolute; top: 1px; right: 2px;
+  min-width: 14px; padding: 0 3px; border-radius: 7px;
+  background: var(--est); color: #fff; font-size: 9px; line-height: 14px; font-weight: 700; text-align: center;
+}
+.heatmap td.hm-zero.has-ours { background: var(--est-soft); }
+.hm-ours-tot { color: var(--est); font-weight: 700; }
+.hm-legend { position: static; margin: 0 0 8px; font-size: 12px; color: var(--muted); }
+.hm-legend .hm-ours { position: static; display: inline-block; vertical-align: 1px; }
+.ok-box { color: var(--up); background: var(--up-soft); border-radius: 10px; padding: 12px 14px; font-size: 13px; }
+.est-dialog {
+  width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 48px);
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px;
+  background: var(--surface); color: var(--ink); box-shadow: var(--shadow-pop);
+}
+.est-dialog::backdrop { background: rgba(10, 12, 15, 0.45); }
+.est-body { display: grid; gap: 12px; margin-top: 10px; font-size: 14px; }
+.est-body .data-table { margin: 8px 0; }
+.est-file { display: block; border: 1.5px dashed var(--line-strong); border-radius: var(--radius-sm); padding: 16px; text-align: center; cursor: pointer; color: var(--sea); font-weight: 600; }
+.est-file:hover { background: var(--surface-2); }
+.est-file input { display: block; margin: 0 auto 8px; font-size: 13px; color: var(--muted); }
+.est-unmatched { columns: 2; padding-left: 18px; margin: 6px 0 0; font-size: 13px; }
+.est-unmatched span { color: var(--muted); }
+details summary { cursor: pointer; font-size: 13px; color: var(--muted); }

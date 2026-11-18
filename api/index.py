@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
 from auth import SESSION_FLAG, SESSION_USER, protect_flask_app  # noqa: E402
 from services.filters import args_from_request, build_meta, dimension_options  # noqa: E402
 from services.store import get_deals, matrix_available  # noqa: E402
-from services import drivers, insights, widgets  # noqa: E402
+from services import drivers, estadel, insights, widgets  # noqa: E402
 
 PUBLIC_DIR = ROOT / "public"
 # Hidden admin tabs. On Vercel they stay closed until ADMIN_ACCESS_KEY is set;
@@ -135,6 +135,42 @@ def api_compare():
 @app.get("/api/heatmap")
 def api_heatmap():
     return _json(widgets.heatmap_data(get_deals(), args_from_request(request)))
+
+
+@app.get("/api/estadel/status")
+def api_estadel_status():
+    return _json(estadel.status())
+
+
+@app.get("/api/estadel/share")
+def api_estadel_share():
+    a = args_from_request(request)
+    if not estadel.configured():
+        return _json({"message": "База продаж Estadel не подключена"})
+    try:
+        return _json(widgets.estadel_share(get_deals(), a))
+    except Exception:  # noqa: BLE001
+        app.logger.exception("estadel share failed")
+        return _json({"message": "Нет связи с базой продаж Estadel"})
+
+
+@app.post("/api/estadel/upload")
+def api_estadel_upload():
+    # Same-origin only: the session cookie alone must not let another site push data.
+    origin = request.headers.get("Origin")
+    if origin and origin.rstrip("/") != request.host_url.rstrip("/"):
+        return _json({"error": "forbidden"}, 403)
+    if request.headers.get("X-Requested-With") != "estadel-upload":
+        return _json({"error": "forbidden"}, 403)
+    body = request.get_json(silent=True) or {}
+    try:
+        res = estadel.replace_all(body.get("rows"), str(body.get("source") or "upload"), get_deals())
+    except ValueError as e:
+        return _json({"error": str(e)}, 400)
+    except Exception:  # noqa: BLE001
+        app.logger.exception("estadel upload failed")
+        return _json({"error": "Не удалось записать в базу, попробуйте ещё раз"}, 500)
+    return _json(res)
 
 
 @app.get("/api/heatmap/details")
