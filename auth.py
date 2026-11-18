@@ -17,7 +17,7 @@ SESSION_USER = "dash_username"
 # (or DASH_AUTH_USER + DASH_AUTH_PASSWORD). No passwords live in the repository.
 _DEFAULT_USERS: dict[str, str] = {}
 
-PUBLIC_PATHS = frozenset({"/login", "/logout", "/robots.txt", "/favicon.ico"})
+PUBLIC_PATHS = frozenset({"/login", "/logout", "/robots.txt", "/favicon.ico", "/api/estadel/sync"})  # sync: own token
 PUBLIC_PREFIXES = ("/assets/", "/css/", "/_favicon")
 
 LOGIN_HTML = """<!DOCTYPE html>
