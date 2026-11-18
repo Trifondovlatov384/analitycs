@@ -19,20 +19,23 @@ jobs:
           set -euo pipefail
           tmp=$(mktemp -d)
           cd "$tmp"
-          npm pack -q chart.js@4.4.7 @fontsource-variable/inter@5.1.0
-          mkdir chart inter
+          npm pack -q chart.js@4.4.7 @fontsource-variable/inter@5.1.0 xlsx@0.18.5
+          mkdir chart inter sheetjs
           tar xzf chart.js-4.4.7.tgz -C chart
+          tar xzf xlsx-0.18.5.tgz -C sheetjs
           tar xzf fontsource-variable-inter-5.1.0.tgz -C inter
           dest="$GITHUB_WORKSPACE/public/vendor"
           mkdir -p "$dest"
           cp chart/package/dist/chart.umd.js "$dest/chart.umd.min.js"
           cp inter/package/files/inter-latin-wght-normal.woff2 "$dest/"
           cp inter/package/files/inter-cyrillic-wght-normal.woff2 "$dest/"
+          cp sheetjs/package/dist/xlsx.full.min.js "$dest/xlsx.full.min.js"
           cd "$dest"
           cat > SHA256SUMS <<'SUMS'
           2812cb8825fdc57469eb2f7bb055e9429244e599920511ee477e828499b632cb  chart.umd.min.js
           62cc01daef72c3ea76a258445368d2f4ab8d05a91f91c53fd12f7c42e3325942  inter-cyrillic-wght-normal.woff2
           f052ee44c3728dfd23aba8a4567150bc314d23903026fbb6ad089422c2df56af  inter-latin-wght-normal.woff2
+          c9506197caf809a075b6dee1da0d36fb19da7158ffe8a88e7b0c96c5d8623c99  xlsx.full.min.js
           SUMS
           sed -i 's/^ *//' SHA256SUMS
           sha256sum -c SHA256SUMS
@@ -41,4 +44,4 @@ jobs:
           git config user.name "vendor-bot"
           git config user.email "vendor-bot@users.noreply.github.com"
           git add public/vendor
-          if git diff --cached --quiet; then echo "No changes"; else git commit -m "Vendor Chart.js 4.4.7 and Inter font" && git push; fi
+          if git diff --cached --quiet; then echo "No changes"; else git commit -m "Vendor front-end assets (Chart.js, Inter, SheetJS)" && git push; fi
