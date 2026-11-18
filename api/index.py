@@ -173,27 +173,6 @@ def api_estadel_upload():
     return _json(res)
 
 
-@app.post("/api/estadel/sync")
-def api_estadel_sync():
-    """Called daily by the Apps Script in the «Estadel. План продаж» sheet (token, no login)."""
-    import hmac
-
-    expected = os.environ.get("ESTADEL_SYNC_TOKEN") or ""
-    got = request.headers.get("X-Sync-Token") or ""
-    if len(expected) < 24 or not hmac.compare_digest(expected, got):
-        return _json({"error": "forbidden"}, 403)
-    body = request.get_json(silent=True) or {}
-    try:
-        res = estadel.replace_all(body.get("rows"), str(body.get("source") or "Google Sheets"), get_deals())
-    except ValueError as e:
-        return _json({"error": str(e)}, 400)
-    except Exception:  # noqa: BLE001
-        app.logger.exception("estadel sync failed")
-        return _json({"error": "db"}, 500)
-    res.pop("status", None)
-    return _json(res)
-
-
 @app.get("/api/heatmap/details")
 def api_heatmap_details():
     return _json(widgets.heatmap_cell_details(get_deals(), args_from_request(request)))
