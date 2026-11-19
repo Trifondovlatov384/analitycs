@@ -737,3 +737,5 @@ a { color: var(--sea); text-decoration: none; }
 .est-unmatched { columns: 2; padding-left: 18px; margin: 6px 0 0; font-size: 13px; }
 .est-unmatched span { color: var(--muted); }
 details summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.est-sub { margin: 18px 0 0; font-size: 14px; font-weight: 600; color: var(--ink); }
+.widget--est #table-estadel-types { max-height: 260px; }

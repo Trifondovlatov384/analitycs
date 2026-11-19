@@ -150,6 +150,71 @@ def _market_attrs(market: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+# Our sheet has no property type. We take it from the registry: the same lot is found among
+# the project's registered deals by price (±3%) and date (from 45 days before our date to
+# 180 days after — registration lags). Failing that, the project's type is used when ≥ 80%
+# of its registered deals are of one type (e.g. a pure apart-hotel).
+TYPE_PRICE_TOL = 0.03
+TYPE_DAYS_BEFORE = 45
+TYPE_DAYS_AFTER = 180
+TYPE_PROJECT_SHARE = 0.8
+_types_cache: dict[tuple, pl.DataFrame] = {}
+
+
+def _infer_types(df: pl.DataFrame, market: pl.DataFrame) -> pl.DataFrame:
+    """Adds `type_lot` and `type_source` ('сделка в реестре' / 'тип проекта' / None) to our rows."""
+    key = (id(market), id(df))
+    if key in _types_cache:
+        return _types_cache[key]
+    o = df.with_row_index("_rid").with_columns(
+        pl.coalesce([pl.col("deal_date"), pl.col("booking_date")]).alias("_ref")
+    )
+    m = market.filter(
+        pl.col("object").is_not_null()
+        & pl.col("type_lot").is_not_null()
+        & pl.col("est_budget").is_not_null()
+        & pl.col("sold_date").is_not_null()
+    ).select(pl.col("object").alias("project"), "sold_date", "est_budget", pl.col("type_lot").alias("_t"))
+    cand = (
+        o.filter(pl.col("project").is_not_null() & pl.col("amount").is_not_null() & pl.col("_ref").is_not_null())
+        .select("_rid", "project", "amount", "_ref")
+        .join(m, on="project", how="inner")
+        .with_columns((pl.col("sold_date") - pl.col("_ref")).dt.total_days().alias("_dd"))
+        .filter(
+            ((pl.col("est_budget") - pl.col("amount")).abs() <= pl.col("amount") * TYPE_PRICE_TOL)
+            & (pl.col("_dd") >= -TYPE_DAYS_BEFORE)
+            & (pl.col("_dd") <= TYPE_DAYS_AFTER)
+        )
+        .sort(["_rid", pl.col("_dd").abs(), (pl.col("est_budget") - pl.col("amount")).abs()])
+        .unique(subset="_rid", keep="first")
+        .select("_rid", pl.col("_t").alias("_t_deal"))
+    )
+    proj = (
+        m.group_by(["project", "_t"]).len()
+        .with_columns((pl.col("len") / pl.col("len").sum().over("project")).alias("_sh"))
+        .filter(pl.col("_sh") >= TYPE_PROJECT_SHARE)
+        .select("project", pl.col("_t").alias("_t_proj"))
+    )
+    out = (
+        o.join(cand, on="_rid", how="left")
+        .join(proj, on="project", how="left")
+        .with_columns(
+            pl.coalesce([pl.col("_t_deal"), pl.col("_t_proj")]).alias("type_lot"),
+            pl.when(pl.col("_t_deal").is_not_null())
+            .then(pl.lit("сделка в реестре"))
+            .when(pl.col("_t_proj").is_not_null())
+            .then(pl.lit("тип проекта"))
+            .otherwise(pl.lit(None, dtype=pl.Utf8))
+            .alias("type_source"),
+        )
+        .drop("_rid", "_ref", "_t_deal", "_t_proj")
+    )
+    if len(_types_cache) > 4:
+        _types_cache.clear()
+    _types_cache[key] = out
+    return out
+
+
 def filtered(market: pl.DataFrame, a: dict[str, Any], kind: str) -> pl.DataFrame:
     """Our deals (kind='deals', by deal date) or bookings (kind='bookings', by booking date)
     that match the dashboard filters. Only rows matched to a registry project are kept."""
@@ -157,7 +222,7 @@ def filtered(market: pl.DataFrame, a: dict[str, Any], kind: str) -> pl.DataFrame
     if df is None or df.is_empty():
         return pl.DataFrame()
     date_col = "deal_date" if kind == "deals" else "booking_date"
-    f = df.filter(pl.col("project").is_not_null() & pl.col(date_col).is_not_null())
+    f = _infer_types(df, market).filter(pl.col("project").is_not_null() & pl.col(date_col).is_not_null())
     if kind == "deals":
         f = f.filter(pl.col("is_deal"))
     f = f.join(_market_attrs(market), on="project", how="inner").with_columns(
@@ -189,6 +254,8 @@ def filtered(market: pl.DataFrame, a: dict[str, Any], kind: str) -> pl.DataFrame
             f = f.filter(pl.col(col).is_in(list(vals)))
     if a.get("object"):
         f = f.filter(pl.col("project") == a["object"])
+    if a.get("type_lot"):
+        f = f.filter(pl.col("type_lot").is_in(list(a["type_lot"])))
     lo, hi = a.get("budget_min"), a.get("budget_max")
     if lo is not None:
         f = f.filter(pl.col("amount") >= lo)
@@ -225,10 +292,25 @@ def by_project_month(market: pl.DataFrame, a: dict[str, Any]) -> dict[tuple[str,
     return {(r["project"], r["sold_month"]): int(r["len"]) for r in f.group_by(["project", "sold_month"]).len().iter_rows(named=True)}
 
 
-def share_report(market_filtered: pl.DataFrame, market: pl.DataFrame, a: dict[str, Any]) -> dict:
-    """Our volume vs the market under the same filters: totals, by month, by project."""
+def _by_type(market_any_type: pl.DataFrame, market: pl.DataFrame, a: dict[str, Any], kind: str) -> tuple[list, int]:
+    """Market vs ours by property type (all other filters applied) and how many of ours have no type."""
+    ours = filtered(market, {**a, "type_lot": []}, kind)
+    mt = {r["type_lot"]: int(r["len"]) for r in market_any_type.group_by("type_lot").len().iter_rows(named=True) if r["type_lot"]}
+    ot = {r["type_lot"]: int(r["len"]) for r in ours.group_by("type_lot").len().iter_rows(named=True)} if ours.height else {}
+    untyped = ot.pop(None, 0)
+    rows_ = [
+        {"type": t, "market": mt.get(t, 0), "ours": ot.get(t, 0), "share": round(ot.get(t, 0) / mt[t] * 100, 2) if mt.get(t) else None}
+        for t in set(mt) | set(ot)
+    ]
+    rows_.sort(key=lambda x: (-x["ours"], -x["market"]))
+    return rows_, untyped
+
+
+def share_report(market_filtered: pl.DataFrame, market: pl.DataFrame, a: dict[str, Any], market_any_type: pl.DataFrame | None = None) -> dict:
+    """Our volume vs the market under the same filters: totals, by month, by project, by type."""
     kind = kind_of(a) or "deals"
     ours = filtered(market, a, kind)
+    by_type, untyped = _by_type(market_any_type if market_any_type is not None else market_filtered, market, a, kind)
     m = market_filtered
     if m.is_empty():
         return {"kind": kind, "message": "Нет рыночных сделок под выбранные фильтры"}
@@ -280,6 +362,9 @@ def share_report(market_filtered: pl.DataFrame, market: pl.DataFrame, a: dict[st
         "ours_by_month": [om.get(x, 0) for x in months],
         "share_by_month": [round(om.get(x, 0) / mm[x] * 100, 2) if mm.get(x) else None for x in months],
         "table": table[:300],
+        "by_type": by_type,
+        "untyped": untyped,
+        "type_filtered": bool(a.get("type_lot")),
     }
 
 

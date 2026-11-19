@@ -1877,12 +1877,17 @@
           ${kpi("Доля в наших ЖК", d.share_in_our_projects != null ? `${nf1.format(d.share_in_our_projects)}<small>%</small>` : "—", `в ${nf0.format(d.our_projects)} комплексах, где мы продаём`)}
         </div>
         <div class="chart-wrap" id="chart-estadel-share"></div>
+        <h3 class="est-sub">По типам недвижимости</h3>
+        <div class="table-wrap" id="table-estadel-types"></div>
+        <h3 class="est-sub">По комплексам</h3>
         <div class="table-wrap" id="table-estadel-share"></div>
         <p class="note">${
           d.kind === "bookings"
             ? "Брони считаются по дате брони, включая слетевшие. Рынок — зарегистрированные сделки, поэтому доля броней — ориентир, а не точная доля."
             : "Наши сделки — по дате сделки из плана продаж. В реестре договор появляется после регистрации, обычно на 1–2 месяца позже, поэтому последний месяц доля завышена."
-        } В расчёт попадают только комплексы, найденные в реестре.</p>`;
+        } В расчёт попадают только комплексы, найденные в реестре. Типа недвижимости в плане продаж нет — он берётся из реестра: та же сделка в этом комплексе по цене (±3%) и дате, а если не нашлась — тип комплекса, когда ≥80% его сделок одного типа.${
+          d.untyped ? ` Тип не определён у ${nf0.format(d.untyped)} ${noun}${d.type_filtered ? " — при фильтре по типу они не учитываются" : ""}.` : ""
+        }</p>`;
       const c = palette();
       barChart("estadel-share", $("#chart-estadel-share"), d.months, d.ours_by_month, {
         horizontal: false,
@@ -1891,6 +1896,12 @@
         label: `Наших ${noun}`,
         extra: [{ type: "line", label: "Доля рынка, % (правая ось)", data: d.share_by_month, borderColor: c.ink, backgroundColor: c.ink, yAxisID: "y1", borderWidth: 2, pointRadius: 2, tension: 0 }],
       });
+      renderTable($("#table-estadel-types"), d.by_type || [], [
+        { key: "type", label: "Тип" },
+        { key: "market", label: "Рынок", num: true },
+        { key: "ours", label: "Estadel", num: true },
+        { key: "share", label: "Доля, %", num: true, render: (v) => (v == null ? "—" : nf1.format(v)) },
+      ], { id: "estadel-types" });
       renderTable($("#table-estadel-share"), d.table || [], [
         { key: "object", label: "Комплекс" },
         { key: "city", label: "Город" },

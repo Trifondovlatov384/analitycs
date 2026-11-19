@@ -405,7 +405,8 @@ def heatmap_data(df: pl.DataFrame, a: dict[str, Any]) -> dict:
 
 def estadel_share(df: pl.DataFrame, a: dict[str, Any]) -> dict:
     base = filtered_deals(df, a, use_mortgage=True)
-    return estadel.share_report(base, df, a)
+    any_type = filtered_deals(df, {**a, "type_lot": []}, use_mortgage=True) if a.get("type_lot") else base
+    return estadel.share_report(base, df, a, any_type)
 
 
 def heatmap_cell_details(df: pl.DataFrame, a: dict[str, Any]) -> dict:
